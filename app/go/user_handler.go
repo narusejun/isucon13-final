@@ -6,13 +6,14 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"github.com/go-json-experiment/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/go-json-experiment/json"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/sessions"
@@ -98,31 +99,29 @@ func getIconHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	var userID int64
-	if err := tx.GetContext(ctx, &userID, "SELECT id FROM users WHERE name = ?", username); err != nil {
+	var user struct {
+		ID   int64   `db:"id"`
+		Hash *string `db:"hash"`
+	}
+	if err := tx.GetContext(ctx, &user, "SELECT u.id AS id, i.hash AS hash FROM users u LEFT JOIN icons i ON i.user_id = u.id WHERE u.name = ?", username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user ID: "+err.Error())
 	}
 
-	var imageWithHash struct {
-		Hash string `db:"hash"`
-	}
-	if err := tx.GetContext(ctx, &imageWithHash, "SELECT hash FROM icons WHERE user_id = ?", userID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return c.File(fallbackImage)
-		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user icon: "+err.Error())
-		}
+	if user.Hash == nil {
+		c.Response().Header().Add("X-Accel-Redirect", "/internal/img/NoImage.jpg")
+		return c.NoContent(http.StatusNoContent)
 	}
 
 	clientIconHash := c.Request().Header.Get("If-None-Match")
-	if clientIconHash == imageWithHash.Hash {
+	if clientIconHash == *user.Hash {
 		return c.NoContent(http.StatusNotModified) // 304 Response
 	}
 
-	return c.File(getUserIconFilePath(imageWithHash.Hash))
+	c.Response().Header().Add("X-Accel-Redirect", fmt.Sprintf("/internal/img/%s.jpg", *user.Hash))
+	return c.NoContent(http.StatusNoContent)
 }
 
 const UserIconImageDir = "/home/isucon/webapp/img"
