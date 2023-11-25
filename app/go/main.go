@@ -4,6 +4,7 @@ package main
 // sqlx的な参考: https://jmoiron.github.io/sqlx/
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -20,6 +21,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	echolog "github.com/labstack/gommon/log"
+	"github.com/orcaman/concurrent-map/v2"
 )
 
 const (
@@ -108,6 +110,73 @@ func connectDB(logger echo.Logger) (*sqlx.DB, error) {
 	return db, nil
 }
 
+var (
+	tagIDCache   = cmap.New[*Tag]()
+	tagNameCache = cmap.New[*Tag]()
+)
+
+func resetTagCache(ctx context.Context) error {
+	tx, err := dbConn.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var tagModels []*TagModel
+	if err := tx.SelectContext(ctx, &tagModels, "SELECT * FROM tags"); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	tagIDCache.Clear()
+	tagNameCache.Clear()
+	for i := range tagModels {
+		tagID := strconv.FormatInt(tagModels[i].ID, 10)
+		tagIDCache.Set(tagID, &Tag{
+			ID:   tagModels[i].ID,
+			Name: tagModels[i].Name,
+		})
+		tagNameCache.Set(tagModels[i].Name, &Tag{
+			ID:   tagModels[i].ID,
+			Name: tagModels[i].Name,
+		})
+	}
+	return nil
+}
+
+func getTagByID(id int64) (*Tag, error) {
+	if tag, ok := tagIDCache.Get(strconv.FormatInt(id, 10)); ok {
+		return tag, nil
+	}
+
+	tag := &Tag{}
+	if err := dbConn.Get(tag, "SELECT * FROM tags WHERE id = ?", id); err != nil {
+		return nil, err
+	}
+
+	tagIDCache.Set(strconv.FormatInt(id, 10), tag)
+	tagNameCache.Set(tag.Name, tag)
+	return tag, nil
+}
+
+func getTagByName(name string) (*Tag, error) {
+	if tag, ok := tagNameCache.Get(name); ok {
+		return tag, nil
+	}
+
+	tag := &Tag{}
+	if err := dbConn.Get(tag, "SELECT * FROM tags WHERE name = ?", name); err != nil {
+		return nil, err
+	}
+
+	tagIDCache.Set(strconv.FormatInt(tag.ID, 10), tag)
+	tagNameCache.Set(tag.Name, tag)
+	return tag, nil
+}
+
 func initializeHandler(c echo.Context) error {
 	if out, err := exec.Command("../sql/init.sh").CombinedOutput(); err != nil {
 		c.Logger().Warnf("init.sh failed with err=%s", string(out))
@@ -119,6 +188,11 @@ func initializeHandler(c echo.Context) error {
 			log.Printf("failed to communicate with pprotein: %v", err)
 		}
 	}()
+
+	ctx := c.Request().Context()
+	if err := resetTagCache(ctx); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to reset tag cache: "+err.Error())
+	}
 
 	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
 	return c.JSON(http.StatusOK, InitializeResponse{
@@ -204,6 +278,12 @@ func main() {
 	}
 	defer conn.Close()
 	dbConn = conn
+
+	// キャッシュの初期化
+	if err := resetTagCache(context.Background()); err != nil {
+		e.Logger.Errorf("failed to reset tag cache: %v", err)
+		os.Exit(1)
+	}
 
 	subdomainAddr, ok := os.LookupEnv(powerDNSSubdomainAddressEnvKey)
 	if !ok {
