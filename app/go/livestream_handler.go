@@ -151,19 +151,13 @@ func reserveLivestreamHandler(c echo.Context) error {
 
 	// タグ追加
 	for _, tagID := range req.Tags {
-		// キャッシュを更新
-		livestreamTagsMu.Lock()
-
 		if _, err := tx.NamedExecContext(ctx, "INSERT INTO livestream_tags (livestream_id, tag_id) VALUES (:livestream_id, :tag_id)", &LivestreamTagModel{
 			LivestreamID: livestreamID,
 			TagID:        tagID,
 		}); err != nil {
-			livestreamTagsMu.Unlock()
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert livestream tag: "+err.Error())
 		}
-
-		delete(livestreamTags, livestreamID)
-		livestreamTagsMu.Unlock()
+		livestreamTagsCache.Delete(livestreamID)
 	}
 
 	livestream, err := fillLivestreamResponse(ctx, tx, *livestreamModel)
@@ -493,8 +487,7 @@ func getLivecommentReportsHandler(c echo.Context) error {
 }
 
 var (
-	livestreamTagsMu = sync.RWMutex{}
-	livestreamTags   = map[int64][]Tag{}
+	livestreamTagsCache = sync.Map{}
 )
 
 func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel LivestreamModel) (Livestream, error) {
@@ -508,23 +501,13 @@ func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel Li
 	}
 
 	tags := []Tag{}
-	// キャッシュを見る
-	livestreamTagsMu.RLock()
-	if t, ok := livestreamTags[livestreamModel.ID]; ok {
-		tags = t
-		livestreamTagsMu.RUnlock()
+	if t, ok := livestreamTagsCache.Load(livestreamModel.ID); ok {
+		tags = t.([]Tag)
 	} else {
-		livestreamTagsMu.RUnlock()
-
-		// キャッシュにないのでDBから取得
-		livestreamTagsMu.Lock()
 		if err := tx.SelectContext(ctx, &tags, "SELECT * FROM tags WHERE id IN (SELECT tag_id FROM livestream_tags WHERE livestream_id = ?)", livestreamModel.ID); err != nil {
-			livestreamTagsMu.Unlock()
 			return Livestream{}, err
 		}
-
-		livestreamTags[livestreamModel.ID] = tags
-		livestreamTagsMu.Unlock()
+		livestreamTagsCache.Store(livestreamModel.ID, tags)
 	}
 
 	livestream := Livestream{
