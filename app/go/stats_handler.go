@@ -196,33 +196,18 @@ func getUserStatisticsHandler(c echo.Context) error {
 	}
 
 	// ライブコメント数、チップ合計
-	var totalLivecomments int64
-	var totalTip int64
-	var livestreams []*LivestreamModel
-	if err := tx.SelectContext(ctx, &livestreams, "SELECT * FROM livestreams WHERE user_id = ?", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
+	var livecomments struct {
+		Tips     int64 `db:"tips"`
+		Comments int64 `db:"comments"`
 	}
-
-	for _, livestream := range livestreams {
-		var livecomments []*LivecommentModel
-		if err := tx.SelectContext(ctx, &livecomments, "SELECT * FROM livecomments WHERE livestream_id = ?", livestream.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
-		}
-
-		for _, livecomment := range livecomments {
-			totalTip += livecomment.Tip
-			totalLivecomments++
-		}
+	if err := tx.GetContext(ctx, &livecomments, "SELECT SUM(tip) AS tips, COUNT(*) AS comments FROM livecomments WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
 	}
 
 	// 合計視聴者数
 	var viewersCount int64
-	for _, livestream := range livestreams {
-		var cnt int64
-		if err := tx.GetContext(ctx, &cnt, "SELECT COUNT(*) FROM livestream_viewers_history WHERE livestream_id = ?", livestream.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream_view_history: "+err.Error())
-		}
-		viewersCount += cnt
+	if err := tx.GetContext(ctx, &viewersCount, "SELECT COUNT(*) FROM livestream_viewers_history WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream_view_history: "+err.Error())
 	}
 
 	// お気に入り絵文字
@@ -245,8 +230,8 @@ func getUserStatisticsHandler(c echo.Context) error {
 		Rank:              rank,
 		ViewersCount:      viewersCount,
 		TotalReactions:    totalReactions,
-		TotalLivecomments: totalLivecomments,
-		TotalTip:          totalTip,
+		TotalLivecomments: livecomments.Comments,
+		TotalTip:          livecomments.Tips,
 		FavoriteEmoji:     favoriteEmoji,
 	}
 	return c.JSON(http.StatusOK, stats)
