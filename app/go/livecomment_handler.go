@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/go-json-experiment/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -177,7 +177,7 @@ func postLivecommentHandler(c echo.Context) error {
 	userID := sess.Values[defaultUserIDKey].(int64)
 
 	var req *PostLivecommentRequest
-	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
+	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
@@ -209,7 +209,7 @@ func postLivecommentHandler(c echo.Context) error {
 		FROM
 		(SELECT ? AS text) AS texts
 		INNER JOIN
-		(SELECT CONCAT('%', ?, '%')	AS pattern) AS patterns
+		(SELECT concat('%', ?, '%')	AS pattern) AS patterns
 		ON texts.text LIKE patterns.pattern;
 		`
 		if err := tx.GetContext(ctx, &hitSpam, query, req.Comment, ngword.Word); err != nil {
@@ -347,7 +347,7 @@ func moderateHandler(c echo.Context) error {
 	userID := sess.Values[defaultUserIDKey].(int64)
 
 	var req *ModerateRequest
-	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
+	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
@@ -404,7 +404,7 @@ func moderateHandler(c echo.Context) error {
 			FROM
 			(SELECT ? AS text) AS texts
 			INNER JOIN
-			(SELECT CONCAT('%', ?, '%')	AS pattern) AS patterns
+			(SELECT concat('%', ?, '%')	AS pattern) AS patterns
 			ON texts.text LIKE patterns.pattern) >= 1;
 			`
 			if _, err := tx.ExecContext(ctx, query, livecomment.ID, livestreamID, livecomment.Comment, ngword.Word); err != nil {

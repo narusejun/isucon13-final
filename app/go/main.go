@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 
+	"github.com/go-json-experiment/json"
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
@@ -200,6 +201,22 @@ func initializeHandler(c echo.Context) error {
 	})
 }
 
+//type JSONSerializer interface {
+//	Serialize(c Context, i interface{}, indent string) error
+//	Deserialize(c Context, i interface{}) error
+//}
+
+type v2JSONSerializer struct {
+}
+
+func (s *v2JSONSerializer) Serialize(c echo.Context, i interface{}, indent string) error {
+	return json.MarshalWrite(c.Response().Writer, i)
+}
+
+func (s *v2JSONSerializer) Deserialize(c echo.Context, i interface{}) error {
+	return json.UnmarshalRead(c.Request().Body, i)
+}
+
 func main() {
 	e := echo.New()
 
@@ -210,6 +227,8 @@ func main() {
 	cookieStore.Options.Domain = "*.u.isucon.dev"
 	e.Use(session.Middleware(cookieStore))
 	// e.Use(middleware.Recover())
+
+	e.JSONSerializer = &v2JSONSerializer{}
 
 	// pprotein
 	echoInt.Integrate(e)
