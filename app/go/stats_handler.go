@@ -200,7 +200,7 @@ func getUserStatisticsHandler(c echo.Context) error {
 		Tips     int64 `db:"tips"`
 		Comments int64 `db:"comments"`
 	}
-	if err := tx.GetContext(ctx, &livecomments, "SELECT SUM(tip) AS tips, COUNT(*) AS comments FROM livecomments WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &livecomments, "SELECT IFNULL(SUM(tip), 0) AS tips, COUNT(*) AS comments FROM livecomments WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
 	}
 
