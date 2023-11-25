@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/labstack/echo/v4"
 )
@@ -23,30 +24,18 @@ type TagsResponse struct {
 }
 
 func getTagHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin new transaction: : "+err.Error()+err.Error())
-	}
-	defer tx.Rollback()
-
-	var tagModels []*TagModel
-	if err := tx.SelectContext(ctx, &tagModels, "SELECT * FROM tags"); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get tags: "+err.Error())
+	tags := make([]*Tag, 0, tagIDCache.Count())
+	for _, tag := range tagIDCache.Items() {
+		tags = append(tags, &Tag{
+			ID:   tag.ID,
+			Name: tag.Name,
+		})
 	}
 
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
-	}
+	slices.SortFunc(tags, func(a, b *Tag) int {
+		return int(a.ID - b.ID)
+	})
 
-	tags := make([]*Tag, len(tagModels))
-	for i := range tagModels {
-		tags[i] = &Tag{
-			ID:   tagModels[i].ID,
-			Name: tagModels[i].Name,
-		}
-	}
 	return c.JSON(http.StatusOK, &TagsResponse{
 		Tags: tags,
 	})
