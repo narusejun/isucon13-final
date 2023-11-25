@@ -151,15 +151,17 @@ func reserveLivestreamHandler(c echo.Context) error {
 
 	// タグ追加
 	for _, tagID := range req.Tags {
+		// キャッシュを更新
+		livestreamTagsMu.Lock()
+
 		if _, err := tx.NamedExecContext(ctx, "INSERT INTO livestream_tags (livestream_id, tag_id) VALUES (:livestream_id, :tag_id)", &LivestreamTagModel{
 			LivestreamID: livestreamID,
 			TagID:        tagID,
 		}); err != nil {
+			livestreamTagsMu.Unlock()
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert livestream tag: "+err.Error())
 		}
 
-		// キャッシュを更新
-		livestreamTagsMu.Lock()
 		delete(livestreamTags, livestreamID)
 		livestreamTagsMu.Unlock()
 	}
@@ -513,8 +515,8 @@ func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel Li
 		livestreamTagsMu.RUnlock()
 	} else {
 		livestreamTagsMu.RUnlock()
-		// キャッシュにないのでDBから取得
 
+		// キャッシュにないのでDBから取得
 		if err := tx.SelectContext(ctx, &tags, "SELECT * FROM tags WHERE id IN (SELECT tag_id FROM livestream_tags WHERE livestream_id = ?)", livestreamModel.ID); err != nil {
 			return Livestream{}, err
 		}
