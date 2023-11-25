@@ -104,16 +104,16 @@ func getIconHandler(c echo.Context) error {
 		return err
 	}
 
+	clientIconHash := c.Request().Header.Get("If-None-Match")
+	if clientIconHash == hash {
+		return c.NoContent(http.StatusNotModified) // 304 Response
+	}
+
 	if hash == fallbackImageHash {
 		//c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
 		//c.Response().Header().Set("X-Accel-Redirect", "/home/isucon/webapp/img/NoImage.jpg")
 		//return c.NoContent(http.StatusOK)
 		return c.File(fallbackImage)
-	}
-
-	clientIconHash := c.Request().Header.Get("If-None-Match")
-	if clientIconHash == hash {
-		return c.NoContent(http.StatusNotModified) // 304 Response
 	}
 
 	c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
