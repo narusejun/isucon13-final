@@ -108,7 +108,7 @@ GROUP BY u.id
 		if err := tx.SelectContext(context.Background(), &tips, `
 SELECT
     u.id AS id,
-    IFNULL(SUM(l2.tip), 0) AS total_tips
+    ifnull(SUM(l2.tip), 0) AS total_tips
 FROM users u
 INNER JOIN livestreams l ON l.user_id = u.id
 INNER JOIN livecomments l2 ON l2.livestream_id = l.id
@@ -160,8 +160,8 @@ func getUserStatisticsHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	var user UserModel
-	if err := tx.GetContext(ctx, &user, "SELECT * FROM users WHERE name = ?", username); err != nil {
+	var userID int64
+	if err := tx.GetContext(ctx, &userID, "SELECT id FROM users WHERE name = ?", username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusBadRequest, "not found user that has the given username")
 		} else {
@@ -200,13 +200,13 @@ func getUserStatisticsHandler(c echo.Context) error {
 		Tips     int64 `db:"tips"`
 		Comments int64 `db:"comments"`
 	}
-	if err := tx.GetContext(ctx, &livecomments, "SELECT IFNULL(SUM(tip), 0) AS tips, COUNT(*) AS comments FROM livecomments WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &livecomments, "SELECT ifnull(SUM(tip), 0) AS tips, COUNT(*) AS comments FROM livecomments WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", userID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
 	}
 
 	// 合計視聴者数
 	var viewersCount int64
-	if err := tx.GetContext(ctx, &viewersCount, "SELECT COUNT(*) FROM livestream_viewers_history WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &viewersCount, "SELECT COUNT(*) FROM livestream_viewers_history WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", userID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream_view_history: "+err.Error())
 	}
 
@@ -300,7 +300,7 @@ GROUP BY r.livestream_id
 	if err := tx.SelectContext(ctx, &tips, `
 SELECT
     l2.livestream_id AS id,
-    IFNULL(SUM(l2.tip), 0) AS total_tips
+    ifnull(SUM(l2.tip), 0) AS total_tips
 FROM livecomments l2
 GROUP BY l2.livestream_id
 `); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -376,7 +376,7 @@ func calcTotalReports(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int
 // 最大チップ額
 func calcMaxTip(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, error) {
 	var maxTip int64
-	if err := tx.GetContext(ctx, &maxTip, `SELECT IFNULL(MAX(tip), 0) FROM livecomments l2 WHERE l2.livestream_id = ? GROUP BY l2.livestream_id`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &maxTip, `SELECT ifnull(MAX(tip), 0) FROM livecomments l2 WHERE l2.livestream_id = ? GROUP BY l2.livestream_id`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	return maxTip, nil

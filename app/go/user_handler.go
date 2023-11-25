@@ -470,7 +470,7 @@ func fillUserResponse(ctx context.Context, tx *sqlx.Tx, userModel UserModel) (Us
 	}
 
 	themeModel := ThemeModel{}
-	if err := tx.GetContext(ctx, &themeModel, "SELECT * FROM themes WHERE user_id = ?", userModel.ID); err != nil {
+	if err := tx.GetContext(ctx, &themeModel, "SELECT id,dark_mode FROM themes WHERE user_id = ?", userModel.ID); err != nil {
 		return User{}, err
 	}
 
