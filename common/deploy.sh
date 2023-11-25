@@ -1,15 +1,15 @@
 #!/bin/bash -eux
 
-# ../$(HOSTNAME)/deploy.sh があればそちらを実行して終了
-if [ -e ../$(HOSTNAME)/deploy.sh ]; then
-  ../$(HOSTNAME)/deploy.sh
+# ../$(hostname)/deploy.sh があればそちらを実行して終了
+if [ -e ../$(hostname)/deploy.sh ]; then
+  ../$(hostname)/deploy.sh
   exit 0
 fi
 
 # 各種設定ファイルのコピー
-# ../$(HOSTNAME)/env.sh があればそちらを優先してコピーする
-if [ -e ../$(HOSTNAME)/env.sh ]; then
-  sudo cp -f ../$(HOSTNAME)/env.sh /home/isucon/env.sh
+# ../$(hostname)/env.sh があればそちらを優先してコピーする
+if [ -e ../$(hostname)/env.sh ]; then
+  sudo cp -f ../$(hostname)/env.sh /home/isucon/env.sh
 else
   sudo cp -f env.sh /home/isucon/env.sh
 fi
@@ -22,8 +22,8 @@ for file in `\find etc -type f`; do
   fi
 
   # 同名のファイルが ../$(HOSTNAME)/etc/ にあればそちらを優先してコピーする
-  if [ -e ../$(HOSTNAME)/$file ]; then
-    sudo cp -f ../$(HOSTNAME)/$file /$file
+  if [ -e ../$(hostname)/$file ]; then
+    sudo cp -f ../$(hostname)/$file /$file
     continue
   fi
   sudo cp -f $file /$file
