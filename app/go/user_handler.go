@@ -96,9 +96,10 @@ func getIconHandler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	etag := "\"" + hash + "\""
 
-	clientIconHash := c.Request().Header.Get("If-None-Match")
-	if clientIconHash == hash {
+	extectedEtag := c.Request().Header.Get("If-None-Match")
+	if etag == extectedEtag {
 		return c.NoContent(http.StatusNotModified) // 304 Response
 	}
 
@@ -112,7 +113,7 @@ func getIconHandler(c echo.Context) error {
 		return c.File(fallbackImage)
 	}
 
-	header.Set("ETag", "\""+hash+"\"")
+	header.Set("ETag", etag)
 	header.Set("X-Accel-Redirect", fmt.Sprintf("/home/isucon/webapp/img/%s.jpg", hash))
 	return c.NoContent(http.StatusOK)
 }
