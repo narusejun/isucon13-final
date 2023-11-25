@@ -74,38 +74,64 @@ func getUserRanking() (UserRanking, error) {
 
 		// ランク算出
 		var users []*UserModel
-		if err := tx.SelectContext(context.Background(), &users, "SELECT * FROM users"); err != nil {
+		if err := tx.SelectContext(context.Background(), &users, "SELECT id, name FROM users"); err != nil {
 			return nil, err
 		}
 
-		var ranking UserRanking
+		data := map[int64]UserRankingEntry{}
 		for _, user := range users {
-			var reactions int64
-			query := `
-		SELECT COUNT(*) FROM users u
-		INNER JOIN livestreams l ON l.user_id = u.id
-		INNER JOIN reactions r ON r.livestream_id = l.id
-		WHERE u.id = ?`
-			if err := tx.GetContext(context.Background(), &reactions, query, user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, err
-			}
-
-			var tips int64
-			query = `
-		SELECT IFNULL(SUM(l2.tip), 0) FROM users u
-		INNER JOIN livestreams l ON l.user_id = u.id	
-		INNER JOIN livecomments l2 ON l2.livestream_id = l.id
-		WHERE u.id = ?`
-			if err := tx.GetContext(context.Background(), &tips, query, user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, err
-			}
-
-			score := reactions + tips
-			ranking = append(ranking, UserRankingEntry{
-				Username: user.Name,
-				Score:    score,
-			})
+			data[user.ID] = UserRankingEntry{Username: user.Name}
 		}
+
+		type UserReaction struct {
+			ID        int64 `db:"id"`
+			Reactions int64 `db:"reactions"`
+		}
+		var reactions []*UserReaction
+		if err := tx.SelectContext(context.Background(), &reactions, `
+SELECT
+    u.id AS id,
+    COUNT(*) AS reactions
+FROM users u
+INNER JOIN livestreams l ON l.user_id = u.id
+INNER JOIN reactions r ON r.livestream_id = l.id
+GROUP BY u.id
+`); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+
+		type UserTotalTip struct {
+			ID        int64 `db:"id"`
+			TotalTips int64 `db:"total_tips"`
+		}
+		var tips []*UserTotalTip
+		if err := tx.SelectContext(context.Background(), &tips, `
+SELECT
+    u.id AS id,
+    IFNULL(SUM(l2.tip), 0) AS total_tips
+FROM users u
+INNER JOIN livestreams l ON l.user_id = u.id	
+INNER JOIN livecomments l2 ON l2.livestream_id = l.id
+GROUP BY u.id
+`); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+
+		for _, reaction := range reactions {
+			d := data[reaction.ID]
+			d.Score += reaction.Reactions
+			data[reaction.ID] = d
+		}
+		for _, tip := range tips {
+			d := data[tip.ID]
+			d.Score += tip.TotalTips
+			data[tip.ID] = d
+		}
+		var ranking = make(UserRanking, 0, len(data))
+		for _, entry := range data {
+			ranking = append(ranking, entry)
+		}
+
 		sort.Sort(ranking)
 
 		return ranking, nil
