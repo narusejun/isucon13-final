@@ -227,6 +227,7 @@ func initializeSlaveHandler(c echo.Context) error {
 	cacheLock.Lock()
 	rrCache = sync.Map{}
 	userCache = sync.Map{}
+	ngwordsCache = sync.Map{}
 	userFullCache = sync.Map{}
 	livestreamCache = sync.Map{}
 	userNameIconCache = sync.Map{}
