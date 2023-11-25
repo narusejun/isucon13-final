@@ -93,13 +93,7 @@ func getIconHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 	username := c.Param("username")
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
-
-	hash, err := getUserIconHash(ctx, tx, username)
+	hash, err := getUserIconHash(ctx, username)
 	if err != nil {
 		return err
 	}
@@ -481,10 +475,16 @@ func fillUserResponse(ctx context.Context, tx *sqlx.Tx, userModel UserModel) (Us
 	return user, nil
 }
 
-func getUserIconHash(ctx context.Context, tx *sqlx.Tx, username string) (string, error) {
+func getUserIconHash(ctx context.Context, username string) (string, error) {
 	if hash, ok := userNameIconCache.Load(username); ok {
 		return hash.(string), nil
 	}
+
+	tx, err := dbConn.BeginTxx(ctx, nil)
+	if err != nil {
+		return "", echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+	}
+	defer tx.Rollback()
 
 	var user struct {
 		ID   int64   `db:"id"`
