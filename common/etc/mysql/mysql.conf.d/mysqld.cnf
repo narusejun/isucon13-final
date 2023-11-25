@@ -82,3 +82,8 @@ innodb_flush_method = O_DIRECT # データファイル、ログファイルの�
 disable-log-bin
 innodb_doublewrite = 0
 innodb_log_writer_threads = off
+
+innodb_buffer_pool_size = 3GB # ディスクイメージをメモリ上にバッファさせる値をきめる設定値(メモリの75%くらい)
+
+# InnoDBの更新ログを記録するディスク上のファイルサイズ(innodb_buffer_pool_sizeの4分の1程度)
+innodb_log_file_size=512MB
