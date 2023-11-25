@@ -124,6 +124,12 @@ func getUserIconFilePath(hash string) string {
 	return fmt.Sprintf("%s/%s.jpg", UserIconImageDir, hash)
 }
 
+var bytesBufferPool = sync.Pool{
+	New: func() any {
+		return &bytes.Buffer{}
+	},
+}
+
 func postIconHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
@@ -138,7 +144,11 @@ func postIconHandler(c echo.Context) error {
 	userID := sess.Values[defaultUserIDKey].(int64)
 	userName := sess.Values[defaultUsernameKey].(string)
 
-	reqBuf := new(bytes.Buffer)
+	reqBuf := bytesBufferPool.Get().(*bytes.Buffer)
+	defer func() {
+		reqBuf.Reset()
+		bytesBufferPool.Put(reqBuf)
+	}()
 	if _, err := reqBuf.ReadFrom(c.Request().Body); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to read request body: "+err.Error())
 	}
