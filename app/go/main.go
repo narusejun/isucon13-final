@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/labstack/echo/v4/middleware"
+	echolog "github.com/labstack/gommon/log"
 	"log"
 	"net"
 	"net/http"
@@ -218,9 +220,9 @@ func (s *v2JSONSerializer) Deserialize(c echo.Context, i interface{}) error {
 func main() {
 	e := echo.New()
 
-	//e.Debug = true
-	//e.Logger.SetLevel(echolog.DEBUG)
-	//e.Use(middleware.Logger())
+	e.Debug = true
+	e.Logger.SetLevel(echolog.DEBUG)
+	e.Use(middleware.Logger())
 	cookieStore := sessions.NewCookieStore(secret)
 	cookieStore.Options.Domain = "*.u.isucon.dev"
 	e.Use(session.Middleware(cookieStore))
