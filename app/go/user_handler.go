@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -277,9 +276,7 @@ func registerHandler(c echo.Context) error {
 	}
 	userFullCache.Delete(userID)
 
-	if out, err := exec.Command("pdnsutil", "add-record", "u.isucon.dev", req.Name, "A", "0", powerDNSSubdomainAddress).CombinedOutput(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
-	}
+	// DNS登録
 	addSubdomain(req.Name + ".u.isucon.dev.")
 
 	user, err := fillUserResponse(ctx, tx, userModel)
