@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-json-experiment/json"
@@ -208,8 +209,13 @@ func postLivecommentHandler(c echo.Context) error {
 
 	// スパム判定
 	var ngwords []*NGWord
-	if err := tx.SelectContext(ctx, &ngwords, "SELECT id, user_id, livestream_id, word FROM ng_words WHERE livestream_id = ?", livestreamModel.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
+	if cached, ok := ngwordsCache.Load(livestreamID); ok {
+		ngwords = cached.([]*NGWord)
+	} else {
+		if err := tx.SelectContext(ctx, &ngwords, "SELECT id, user_id, livestream_id, word FROM ng_words WHERE livestream_id = ?", livestreamModel.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
+		}
+		ngwordsCache.Store(livestreamID, ngwords)
 	}
 
 	//var hitSpam int
@@ -347,6 +353,10 @@ func reportLivecommentHandler(c echo.Context) error {
 	return c.JSON(http.StatusCreated, report)
 }
 
+var (
+	ngwordsCache = sync.Map{}
+)
+
 // NGワードを登録
 func moderateHandler(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -417,6 +427,7 @@ func moderateHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 	time.Sleep(500 * time.Millisecond)
+	ngwordsCache.Delete(livestreamID)
 
 	return c.JSON(http.StatusCreated, map[string]interface{}{
 		"word_id": wordID,
