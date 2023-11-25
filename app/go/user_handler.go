@@ -111,8 +111,9 @@ func getIconHandler(c echo.Context) error {
 	}
 
 	if user.Hash == nil {
-		c.Response().Header().Add("X-Accel-Redirect", "/internal/img/NoImage.jpg")
-		return c.NoContent(http.StatusNoContent)
+		c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
+		c.Response().Header().Set("X-Accel-Redirect", "/home/isucon/webapp/img/NoImage.jpg")
+		return c.NoContent(http.StatusOK)
 	}
 
 	clientIconHash := c.Request().Header.Get("If-None-Match")
@@ -120,8 +121,9 @@ func getIconHandler(c echo.Context) error {
 		return c.NoContent(http.StatusNotModified) // 304 Response
 	}
 
-	c.Response().Header().Add("X-Accel-Redirect", fmt.Sprintf("/internal/img/%s.jpg", *user.Hash))
-	return c.NoContent(http.StatusNoContent)
+	c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
+	c.Response().Header().Set("X-Accel-Redirect", fmt.Sprintf("/home/isucon/webapp/img/%s.jpg", *user.Hash))
+	return c.NoContent(http.StatusOK)
 }
 
 const UserIconImageDir = "/home/isucon/webapp/img"
