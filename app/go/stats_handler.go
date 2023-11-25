@@ -264,6 +264,7 @@ GROUP BY l2.livestream_id
 	for _, reaction := range reactions {
 		data[reaction.ID] = LivestreamRankingEntry{LivestreamID: reaction.ID, Score: reaction.Reactions}
 	}
+	totalReactions := data[livestream.ID].Score
 	for _, tip := range tips {
 		if d, ok := data[tip.ID]; ok {
 			d.Score += tip.TotalTips
@@ -299,11 +300,6 @@ GROUP BY l2.livestream_id
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to find maximum tip livecomment: "+err.Error())
 	}
 
-	totalReactions, err := calcTotalReactions(tx, ctx, livestreamID)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to count total reactions: "+err.Error())
-	}
-
 	totalReports, err := calcTotalReports(tx, ctx, livestreamID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to count total spam reports: "+err.Error())
@@ -325,25 +321,16 @@ GROUP BY l2.livestream_id
 // スパム報告数
 func calcTotalReports(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, error) {
 	var totalReports int64
-	if err := tx.GetContext(ctx, &totalReports, `SELECT COUNT(*) FROM livestreams l INNER JOIN livecomment_reports r ON r.livestream_id = l.id WHERE l.id = ?`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &totalReports, `SELECT COUNT(*) FROM livecomment_reports r WHERE r.livestream_id = ?`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	return totalReports, nil
 }
 
-// リアクション数
-func calcTotalReactions(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, error) {
-	var totalReactions int64
-	if err := tx.GetContext(ctx, &totalReactions, "SELECT COUNT(*) FROM livestreams l INNER JOIN reactions r ON r.livestream_id = l.id WHERE l.id = ?", livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
-	}
-	return totalReactions, nil
-}
-
 // 最大チップ額
 func calcMaxTip(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, error) {
 	var maxTip int64
-	if err := tx.GetContext(ctx, &maxTip, `SELECT IFNULL(MAX(tip), 0) FROM livestreams l INNER JOIN livecomments l2 ON l2.livestream_id = l.id WHERE l.id = ?`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &maxTip, `SELECT IFNULL(MAX(tip), 0) FROM livecomments l2 WHERE l2.livestream_id = ?`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	return maxTip, nil
@@ -352,7 +339,7 @@ func calcMaxTip(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, er
 // 視聴者数算出
 func calcViewerCount(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, error) {
 	var viewersCount int64
-	if err := tx.GetContext(ctx, &viewersCount, `SELECT COUNT(*) FROM livestreams l INNER JOIN livestream_viewers_history h ON h.livestream_id = l.id WHERE l.id = ?`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &viewersCount, `SELECT COUNT(*) FROM livestream_viewers_history h WHERE h.livestream_id = ?`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	return viewersCount, nil
