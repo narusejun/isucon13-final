@@ -9,13 +9,8 @@ import (
 )
 
 type Tag struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-}
-
-type TagModel struct {
-	ID   int64  `db:"id"`
-	Name string `db:"name"`
+	ID   int64  `json:"id" db:"id"`
+	Name string `json:"name" db:"name"`
 }
 
 type TagsResponse struct {
@@ -31,7 +26,7 @@ func getTagHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	var tagModels []*TagModel
+	var tagModels []*Tag
 	if err := tx.SelectContext(ctx, &tagModels, "SELECT * FROM tags"); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get tags: "+err.Error())
 	}
