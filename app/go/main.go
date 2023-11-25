@@ -181,9 +181,11 @@ func getTagByName(name string) (*Tag, error) {
 
 func initializeHandler(c echo.Context) error {
 	cacheLock.Lock()
+	rrCache = sync.Map{}
 	userCache = sync.Map{}
 	userFullCache = sync.Map{}
 	userNameIconCache = sync.Map{}
+	livestreamTagsCache = sync.Map{}
 	cacheLock.Unlock()
 
 	if out, err := exec.Command("../sql/init.sh").CombinedOutput(); err != nil {
