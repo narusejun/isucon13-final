@@ -17,6 +17,9 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	echolog "github.com/labstack/gommon/log"
 
+	"github.com/labstack/echo/v4/middleware"
+	echolog "github.com/labstack/gommon/log"
+
 	"github.com/go-json-experiment/json"
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
@@ -226,6 +229,8 @@ func (s *v2JSONSerializer) Deserialize(c echo.Context, i interface{}) error {
 }
 
 func main() {
+	go startDNS()
+
 	e := echo.New()
 
 	e.Debug = true

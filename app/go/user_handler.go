@@ -286,6 +286,7 @@ func registerHandler(c echo.Context) error {
 	if out, err := exec.Command("pdnsutil", "add-record", "u.isucon.dev", req.Name, "A", "0", powerDNSSubdomainAddress).CombinedOutput(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
 	}
+	addSubdomain(req.Name + ".u.isucon.dev.")
 
 	user, err := fillUserResponse(ctx, tx, userModel)
 	if err != nil {
