@@ -8,7 +8,19 @@ import (
 	"github.com/miekg/dns"
 )
 
-func NewRR(s string) dns.RR { r, _ := dns.NewRR(s); return r }
+var (
+	rrCache = sync.Map{}
+)
+
+func newRR(s string) dns.RR {
+	if rr, ok := rrCache.Load(s); ok {
+		return rr.(dns.RR)
+	}
+
+	r, _ := dns.NewRR(s)
+	rrCache.Store(s, r)
+	return r
+}
 
 var subdomains = []string{
 	"u.isucon.dev.",
@@ -1030,10 +1042,10 @@ func startDNS() error {
 		m.SetReply(r)
 		if r.Question[0].Qtype == dns.TypeNS && r.Question[0].Name == "u.isucon.dev." {
 			m.Answer = []dns.RR{
-				NewRR("u.isucon.dev. 120 IN NS ns1.u.isucon.dev."),
+				newRR("u.isucon.dev. 120 IN NS ns1.u.isucon.dev."),
 			}
 			m.Extra = []dns.RR{
-				NewRR("ns1.u.isucon.dev. 120 IN A 54.178.156.176"),
+				newRR("ns1.u.isucon.dev. 120 IN A 54.178.156.176"),
 			}
 		} else {
 			muSubdomains.RLock()
@@ -1041,12 +1053,12 @@ func startDNS() error {
 
 			if slices.Contains(subdomains, r.Question[0].Name) {
 				m.Answer = []dns.RR{
-					NewRR(r.Question[0].Name + " 120 IN A 54.178.156.176"),
+					newRR(r.Question[0].Name + " 120 IN A 54.178.156.176"),
 				}
 			} else {
 				m.Rcode = dns.RcodeNameError
 				m.Ns = []dns.RR{
-					NewRR("u.isucon.dev.		60	IN	SOA	ns1.u.isucon.dev. hostmaster.u.isucon.dev. 0 10800 3600 604800 3600"),
+					newRR("u.isucon.dev. 60 IN SOA ns1.u.isucon.dev. hostmaster.u.isucon.dev. 0 10800 3600 604800 3600"),
 				}
 			}
 		}
