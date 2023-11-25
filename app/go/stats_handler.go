@@ -229,6 +229,18 @@ func getLivestreamStatisticsHandler(c echo.Context) error {
 		}
 	}
 
+	var livestreams []struct {
+		ID int64 `db:"id"`
+	}
+	if err := tx.SelectContext(ctx, &livestreams, "SELECT id FROM livestreams"); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
+	}
+
+	data := map[int64]LivestreamRankingEntry{}
+	for _, s := range livestreams {
+		data[s.ID] = LivestreamRankingEntry{LivestreamID: s.ID}
+	}
+
 	type LiveReaction struct {
 		ID        int64 `db:"id"`
 		Reactions int64 `db:"reactions"`
@@ -260,18 +272,16 @@ GROUP BY l2.livestream_id
 	}
 
 	// ランク算出
-	data := map[int64]LivestreamRankingEntry{}
 	for _, reaction := range reactions {
-		data[reaction.ID] = LivestreamRankingEntry{LivestreamID: reaction.ID, Score: reaction.Reactions}
+		d := data[reaction.ID]
+		d.Score += reaction.Reactions
+		data[reaction.ID] = d
 	}
 	totalReactions := data[livestream.ID].Score
 	for _, tip := range tips {
-		if d, ok := data[tip.ID]; ok {
-			d.Score += tip.TotalTips
-			data[tip.ID] = d
-		} else {
-			data[tip.ID] = LivestreamRankingEntry{LivestreamID: tip.ID, Score: tip.TotalTips}
-		}
+		d := data[tip.ID]
+		d.Score += tip.TotalTips
+		data[tip.ID] = d
 	}
 
 	var ranking = make(LivestreamRanking, 0, len(data))
