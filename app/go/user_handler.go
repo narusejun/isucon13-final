@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,7 +88,6 @@ type PostIconResponse struct {
 
 func getIconHandler(c echo.Context) error {
 	ctx := c.Request().Context()
-
 	username := c.Param("username")
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
@@ -96,21 +96,31 @@ func getIconHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	var user UserModel
-	if err := tx.GetContext(ctx, &user, "SELECT * FROM users WHERE name = ?", username); err != nil {
+	var image []byte
+	var userID int64
+	if err := tx.GetContext(ctx, &userID, "SELECT id FROM users WHERE name = ?", username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user ID: "+err.Error())
 	}
 
-	var image []byte
-	if err := tx.GetContext(ctx, &image, "SELECT image FROM icons WHERE user_id = ?", user.ID); err != nil {
+	if err := tx.GetContext(ctx, &image, "SELECT image FROM icons WHERE user_id = ?", userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.File(fallbackImage)
 		} else {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user icon: "+err.Error())
 		}
+	}
+
+	// 画像のハッシュを計算
+	hasher := sha256.New()
+	hasher.Write(image)
+	iconHash := hex.EncodeToString(hasher.Sum(nil))
+
+	clientIconHash := c.Request().Header.Get("If-None-Match")
+	if clientIconHash == iconHash {
+		return c.NoContent(http.StatusNotModified) // 304 Response
 	}
 
 	return c.Blob(http.StatusOK, "image/jpeg", image)
