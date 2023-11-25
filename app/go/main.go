@@ -180,6 +180,9 @@ func getTagByName(name string) (*Tag, error) {
 }
 
 func initializeHandler(c echo.Context) error {
+	// DNSのキャッシュをクリア
+	resetSubdomains()
+
 	cacheLock.Lock()
 	rrCache = sync.Map{}
 	userCache = sync.Map{}
