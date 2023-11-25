@@ -4,7 +4,7 @@ PPROF_ID:=latest
 
 .PHONY: download-pgo
 download-pgo:
-	wget https://pprotein.tokyoscience.jp/api/pprof/data/$(PPROF_ID)?label=$(HOSTNAME) -O app/webapp/go/pgo.pb.gz
+	wget https://pprotein.tokyoscience.jp/api/pprof/data/$(PPROF_ID)?label=$(HOSTNAME) -O app/go/pgo.pb.gz
 
 .PHONY: deploy
 deploy: checkout start
