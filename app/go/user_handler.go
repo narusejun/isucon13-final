@@ -102,6 +102,9 @@ func getIconHandler(c echo.Context) error {
 		return c.NoContent(http.StatusNotModified) // 304 Response
 	}
 
+	header := c.Response().Header()
+	header.Set(echo.HeaderContentType, "image/jpeg")
+
 	if hash == fallbackImageHash {
 		//c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
 		//c.Response().Header().Set("X-Accel-Redirect", "/home/isucon/webapp/img/NoImage.jpg")
@@ -109,8 +112,8 @@ func getIconHandler(c echo.Context) error {
 		return c.File(fallbackImage)
 	}
 
-	c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
-	c.Response().Header().Set("X-Accel-Redirect", fmt.Sprintf("/home/isucon/webapp/img/%s.jpg", hash))
+	header.Set("ETag", "\""+hash+"\"")
+	header.Set("X-Accel-Redirect", fmt.Sprintf("/home/isucon/webapp/img/%s.jpg", hash))
 	return c.NoContent(http.StatusOK)
 }
 
