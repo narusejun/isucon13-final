@@ -24,6 +24,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	echolog "github.com/labstack/gommon/log"
 	cmap "github.com/orcaman/concurrent-map/v2"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -180,7 +181,47 @@ func getTagByName(name string) (*Tag, error) {
 }
 
 func initializeHandler(c echo.Context) error {
-	// DNSのキャッシュをクリア
+	if out, err := exec.Command("../sql/init.sh").CombinedOutput(); err != nil {
+		c.Logger().Warnf("init.sh failed with err=%s", string(out))
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
+	}
+
+	eg := errgroup.Group{}
+	eg.Go(func() error {
+		if _, err := http.Post("http://192.168.0.11:8080/api/initialize/slave", "application/json", nil); err != nil {
+			return err
+		}
+		return nil
+	})
+	eg.Go(func() error {
+		if _, err := http.Post("http://192.168.0.12:8080/api/initialize/slave", "application/json", nil); err != nil {
+			return err
+		}
+		return nil
+	})
+	eg.Go(func() error {
+		if _, err := http.Post("http://192.168.0.13:8080/api/initialize/slave", "application/json", nil); err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err := eg.Wait(); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
+	}
+
+	go func() {
+		if _, err := http.Get("https://pprotein.tokyoscience.jp/api/group/collect"); err != nil {
+			log.Printf("failed to communicate with pprotein: %v", err)
+		}
+	}()
+
+	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
+	return c.JSON(http.StatusOK, InitializeResponse{
+		Language: "golang",
+	})
+}
+func initializeSlaveHandler(c echo.Context) error {
 	resetSubdomains()
 
 	cacheLock.Lock()
@@ -191,26 +232,12 @@ func initializeHandler(c echo.Context) error {
 	livestreamTagsCache = sync.Map{}
 	cacheLock.Unlock()
 
-	if out, err := exec.Command("../sql/init.sh").CombinedOutput(); err != nil {
-		c.Logger().Warnf("init.sh failed with err=%s", string(out))
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
-	}
-
-	go func() {
-		if _, err := http.Get("https://pprotein.tokyoscience.jp/api/group/collect"); err != nil {
-			log.Printf("failed to communicate with pprotein: %v", err)
-		}
-	}()
-
 	ctx := c.Request().Context()
 	if err := resetTagCache(ctx); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to reset tag cache: "+err.Error())
 	}
 
-	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
-	return c.JSON(http.StatusOK, InitializeResponse{
-		Language: "golang",
-	})
+	return c.NoContent(http.StatusNoContent)
 }
 
 //type JSONSerializer interface {
@@ -249,6 +276,7 @@ func main() {
 
 	// 初期化
 	e.POST("/api/initialize", initializeHandler)
+	e.POST("/api/initialize/slave", initializeSlaveHandler)
 
 	// top
 	e.GET("/api/tag", getTagHandler)
@@ -293,6 +321,7 @@ func main() {
 	e.GET("/api/user/:username/statistics", getUserStatisticsHandler)
 	e.GET("/api/user/:username/icon", getIconHandler)
 	e.POST("/api/icon", postIconHandler)
+	e.POST("/api/internal/icon", postInternalIconHandler)
 
 	// stats
 	// ライブ配信統計情報
