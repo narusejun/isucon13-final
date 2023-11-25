@@ -140,7 +140,7 @@ func postIconHandler(c echo.Context) error {
 
 	// 別のインスタンスにリクエスト
 	hexHash := ""
-	if resp, err := http.Post("http://192.168.0.11:8080/api/internal/icon", "application/json; charset=UTF-8", c.Request().Body); err != nil {
+	if resp, err := http.Post("http://192.168.0.11:8080/api/internal/icon", "application/json; charset=UTF-8", c.Request().Body); err != nil || resp.StatusCode != http.StatusOK {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to post internal icon: "+err.Error())
 	} else {
 		defer resp.Body.Close()
