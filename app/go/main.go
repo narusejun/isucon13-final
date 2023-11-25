@@ -195,6 +195,8 @@ func initializeHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to reset tag cache: "+err.Error())
 	}
 
+	sankey.Trunc()
+
 	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
 	return c.JSON(http.StatusOK, InitializeResponse{
 		Language: "golang",
@@ -217,6 +219,15 @@ func (s *v2JSONSerializer) Deserialize(c echo.Context, i interface{}) error {
 	return json.UnmarshalRead(c.Request().Body, i)
 }
 
+var (
+	sankey *Sankey
+)
+
+func init() {
+	sankey = NewSankey("/tmp/sankey.csv")
+	sankey.Trunc()
+}
+
 func main() {
 	e := echo.New()
 
@@ -232,6 +243,21 @@ func main() {
 
 	// pprotein
 	echoInt.Integrate(e)
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if err := verifyUserSession(c); err != nil {
+				sankey.Add("anonymous", c.Path())
+				return next(c)
+			}
+			// error already checked
+			sess, _ := session.Get(defaultSessionIDKey, c)
+			// existence already checked
+			userID := sess.Values[defaultUserIDKey].(int64)
+			sankey.Add(strconv.FormatInt(userID, 10), c.Path())
+			return next(c)
+		}
+	})
 
 	// 初期化
 	e.POST("/api/initialize", initializeHandler)
