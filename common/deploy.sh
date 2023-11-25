@@ -42,6 +42,7 @@ fi
 
 
 # ミドルウェア・Appの再起動
+sudo systemctl restart pdns
 sudo systemctl restart mysql
 sudo systemctl restart nginx
 sudo systemctl restart ${APP_NAME}-go
