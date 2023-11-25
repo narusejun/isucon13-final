@@ -1,13 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sync"
@@ -124,12 +124,6 @@ func getUserIconFilePath(hash string) string {
 	return fmt.Sprintf("%s/%s.jpg", UserIconImageDir, hash)
 }
 
-var bytesBufferPool = sync.Pool{
-	New: func() any {
-		return &bytes.Buffer{}
-	},
-}
-
 func postIconHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
@@ -144,18 +138,17 @@ func postIconHandler(c echo.Context) error {
 	userID := sess.Values[defaultUserIDKey].(int64)
 	userName := sess.Values[defaultUsernameKey].(string)
 
-	reqBuf := bytesBufferPool.Get().(*bytes.Buffer)
-	defer func() {
-		reqBuf.Reset()
-		bytesBufferPool.Put(reqBuf)
-	}()
-	if _, err := reqBuf.ReadFrom(c.Request().Body); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to read request body: "+err.Error())
-	}
-
-	var req *PostIconRequest
-	if err := json.Unmarshal(reqBuf.Bytes(), &req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
+	// 別のインスタンスにリクエスト
+	hexHash := ""
+	if resp, err := http.Post("http://192.168.0.11:8080/api/internal/icon", "application/json; charset=UTF-8", c.Request().Body); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to post internal icon: "+err.Error())
+	} else {
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to post internal icon: "+err.Error())
+		}
+		hexHash = string(b)
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
@@ -166,16 +159,6 @@ func postIconHandler(c echo.Context) error {
 
 	if _, err := tx.ExecContext(ctx, "DELETE FROM icons WHERE user_id = ?", userID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old user icon: "+err.Error())
-	}
-
-	iconHash := sha256.Sum256(req.Image)
-	hexHash := hex.EncodeToString(iconHash[:])
-
-	// 別のインスタンスにリクエスト
-	if resp, err := http.Post("http://192.168.0.11:8080/api/internal/icon", "application/json; charset=UTF-8", reqBuf); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to post internal icon: "+err.Error())
-	} else {
-		defer resp.Body.Close()
 	}
 
 	rs, err := tx.ExecContext(ctx, "INSERT INTO icons (user_id, image, hash) VALUES (?, ?, ?)", userID, []byte{}, hexHash)
@@ -216,7 +199,7 @@ func postInternalIconHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	return c.NoContent(http.StatusOK)
+	return c.String(http.StatusOK, hexHash)
 }
 
 func getMeHandler(c echo.Context) error {
