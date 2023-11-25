@@ -15,6 +15,7 @@ require (
 	github.com/miekg/dns v1.1.57
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	golang.org/x/crypto v0.15.0
+	golang.org/x/sync v0.5.0
 )
 
 require (
