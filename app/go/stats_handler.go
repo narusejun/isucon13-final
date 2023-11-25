@@ -321,7 +321,7 @@ GROUP BY l2.livestream_id
 // スパム報告数
 func calcTotalReports(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, error) {
 	var totalReports int64
-	if err := tx.GetContext(ctx, &totalReports, `SELECT COUNT(*) FROM livecomment_reports r WHERE r.livestream_id = ?`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &totalReports, `SELECT COUNT(*) FROM livecomment_reports r WHERE r.livestream_id = ? GROUP BY r.livestream_id`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	return totalReports, nil
@@ -330,7 +330,7 @@ func calcTotalReports(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int
 // 最大チップ額
 func calcMaxTip(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, error) {
 	var maxTip int64
-	if err := tx.GetContext(ctx, &maxTip, `SELECT IFNULL(MAX(tip), 0) FROM livecomments l2 WHERE l2.livestream_id = ?`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &maxTip, `SELECT IFNULL(MAX(tip), 0) FROM livecomments l2 WHERE l2.livestream_id = ? GROUP BY l2.livestream_id`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	return maxTip, nil
@@ -339,7 +339,7 @@ func calcMaxTip(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, er
 // 視聴者数算出
 func calcViewerCount(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, error) {
 	var viewersCount int64
-	if err := tx.GetContext(ctx, &viewersCount, `SELECT COUNT(*) FROM livestream_viewers_history h WHERE h.livestream_id = ?`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &viewersCount, `SELECT COUNT(*) FROM livestream_viewers_history h WHERE h.livestream_id = ? GROUP BY h.livestream_id`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	return viewersCount, nil
