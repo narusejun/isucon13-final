@@ -14,12 +14,6 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/labstack/echo/v4/middleware"
-	echolog "github.com/labstack/gommon/log"
-
-	"github.com/labstack/echo/v4/middleware"
-	echolog "github.com/labstack/gommon/log"
-
 	"github.com/go-json-experiment/json"
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
@@ -27,6 +21,8 @@ import (
 	echoInt "github.com/kaz/pprotein/integration/echov4"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	echolog "github.com/labstack/gommon/log"
 	cmap "github.com/orcaman/concurrent-map/v2"
 )
 
