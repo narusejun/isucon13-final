@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"fmt"
+	echoInt "github.com/kaz/pprotein/integration/echov4"
+	echolog "github.com/labstack/gommon/log"
 	"log"
 	"net"
 	"net/http"
@@ -18,11 +20,8 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
-	echoInt "github.com/kaz/pprotein/integration/echov4"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
-	echolog "github.com/labstack/gommon/log"
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"golang.org/x/sync/errgroup"
 )
@@ -210,11 +209,11 @@ func initializeHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
 	}
 
-	go func() {
-		if _, err := http.Get("https://pprotein.tokyoscience.jp/api/group/collect"); err != nil {
-			log.Printf("failed to communicate with pprotein: %v", err)
-		}
-	}()
+	//go func() {
+	//	if _, err := http.Get("https://pprotein.tokyoscience.jp/api/group/collect"); err != nil {
+	//		log.Printf("failed to communicate with pprotein: %v", err)
+	//	}
+	//}()
 
 	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
 	return c.JSON(http.StatusOK, InitializeResponse{
@@ -263,9 +262,9 @@ func main() {
 
 	e := echo.New()
 
-	e.Debug = true
-	e.Logger.SetLevel(echolog.DEBUG)
-	e.Use(middleware.Logger())
+	//e.Debug = true
+	e.Logger.SetLevel(echolog.OFF)
+	//e.Use(middleware.Logger())
 	cookieStore := sessions.NewCookieStore(secret)
 	cookieStore.Options.Domain = "*.u.isucon.dev"
 	e.Use(session.Middleware(cookieStore))
@@ -274,7 +273,7 @@ func main() {
 	e.JSONSerializer = &v2JSONSerializer{}
 
 	// pprotein
-	echoInt.Integrate(e)
+	echoInt.EnableDebugHandler(e)
 
 	// 初期化
 	e.POST("/api/initialize", initializeHandler)
