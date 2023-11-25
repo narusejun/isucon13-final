@@ -402,11 +402,6 @@ func moderateHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted NG word id: "+err.Error())
 	}
 
-	var ngwords []*NGWord
-	if err := tx.SelectContext(ctx, &ngwords, "SELECT * FROM ng_words WHERE livestream_id = ? FOR UPDATE", livestreamID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
-	}
-
 	// 新規に追加したNGワードにヒットする過去の投稿も全削除する
 	// ライブコメント一覧取得
 	query := `
@@ -422,6 +417,7 @@ func moderateHandler(c echo.Context) error {
 	if err := tx.Commit(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
+	time.Sleep(500 * time.Millisecond)
 
 	return c.JSON(http.StatusCreated, map[string]interface{}{
 		"word_id": wordID,

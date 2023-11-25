@@ -76,3 +76,9 @@ log_error = /var/log/mysql/error.log
 max_binlog_size   = 100M
 # binlog_do_db		= include_database_name
 # binlog_ignore_db	= include_database_name
+
+innodb_flush_log_at_trx_commit = 0 # 1に設定するとトランザクション単位でログを出力するが 2 を指定すると1秒間に1回ログを吐く。0だとログも1秒に1回。
+innodb_flush_method = O_DIRECT # データファイル、ログファイルの読み書き方式を指定する(実験する価値はある)
+disable-log-bin
+innodb_doublewrite = 0
+innodb_log_writer_threads = off
