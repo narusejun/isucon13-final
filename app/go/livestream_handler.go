@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -156,6 +157,7 @@ func reserveLivestreamHandler(c echo.Context) error {
 		}); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert livestream tag: "+err.Error())
 		}
+		livestreamTagsCache.Delete(livestreamID)
 	}
 
 	livestream, err := fillLivestreamResponse(ctx, tx, *livestreamModel)
@@ -489,6 +491,10 @@ func getLivecommentReportsHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, reports)
 }
 
+var (
+	livestreamTagsCache = sync.Map{}
+)
+
 func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel LivestreamModel) (Livestream, error) {
 	ownerModel := UserModel{}
 	if err := tx.GetContext(ctx, &ownerModel, "SELECT * FROM users WHERE id = ?", livestreamModel.UserID); err != nil {
@@ -499,26 +505,14 @@ func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel Li
 		return Livestream{}, err
 	}
 
-	var livestreamTagModels []*LivestreamTagModel
-	if err := tx.SelectContext(ctx, &livestreamTagModels, "SELECT * FROM livestream_tags WHERE livestream_id = ?", livestreamModel.ID); err != nil {
-		return Livestream{}, err
-	}
-
-	tags := make([]Tag, len(livestreamTagModels))
-	for i := range livestreamTagModels {
-		tag, err := getTagByID(livestreamTagModels[i].TagID)
-		if err != nil {
+	tags := []Tag{}
+	if t, ok := livestreamTagsCache.Load(livestreamModel.ID); ok {
+		tags = t.([]Tag)
+	} else {
+		if err := tx.SelectContext(ctx, &tags, "SELECT * FROM tags WHERE id IN (SELECT tag_id FROM livestream_tags WHERE livestream_id = ?)", livestreamModel.ID); err != nil {
 			return Livestream{}, err
 		}
-		//tagModel := TagModel{}
-		//if err := tx.GetContext(ctx, &tagModel, "SELECT * FROM tags WHERE id = ?", livestreamTagModels[i].TagID); err != nil {
-		//	return Livestream{}, err
-		//}
-
-		tags[i] = Tag{
-			ID:   tag.ID,
-			Name: tag.Name,
-		}
+		livestreamTagsCache.Store(livestreamModel.ID, tags)
 	}
 
 	livestream := Livestream{

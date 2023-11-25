@@ -21,7 +21,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	echolog "github.com/labstack/gommon/log"
-	"github.com/orcaman/concurrent-map/v2"
+	cmap "github.com/orcaman/concurrent-map/v2"
 )
 
 const (
@@ -122,7 +122,7 @@ func resetTagCache(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 
-	var tagModels []*TagModel
+	var tagModels []*Tag
 	if err := tx.SelectContext(ctx, &tagModels, "SELECT * FROM tags"); err != nil {
 		return err
 	}

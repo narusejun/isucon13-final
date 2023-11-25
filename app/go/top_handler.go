@@ -10,13 +10,8 @@ import (
 )
 
 type Tag struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-}
-
-type TagModel struct {
-	ID   int64  `db:"id"`
-	Name string `db:"name"`
+	ID   int64  `json:"id" db:"id"`
+	Name string `json:"name" db:"name"`
 }
 
 type TagsResponse struct {
