@@ -507,7 +507,7 @@ func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel Li
 		return Livestream{}, err
 	}
 
-	var tags []Tag
+	tags := []Tag{}
 	// キャッシュを見る
 	livestreamTagsMu.RLock()
 	if t, ok := livestreamTags[livestreamModel.ID]; ok {
@@ -517,11 +517,12 @@ func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel Li
 		livestreamTagsMu.RUnlock()
 
 		// キャッシュにないのでDBから取得
+		livestreamTagsMu.Lock()
 		if err := tx.SelectContext(ctx, &tags, "SELECT * FROM tags WHERE id IN (SELECT tag_id FROM livestream_tags WHERE livestream_id = ?)", livestreamModel.ID); err != nil {
+			livestreamTagsMu.Unlock()
 			return Livestream{}, err
 		}
 
-		livestreamTagsMu.Lock()
 		livestreamTags[livestreamModel.ID] = tags
 		livestreamTagsMu.Unlock()
 	}
