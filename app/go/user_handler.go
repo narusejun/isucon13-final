@@ -111,9 +111,10 @@ func getIconHandler(c echo.Context) error {
 	}
 
 	if user.Hash == nil {
-		c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
-		c.Response().Header().Set("X-Accel-Redirect", "/home/isucon/webapp/img/NoImage.jpg")
-		return c.NoContent(http.StatusOK)
+		//c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
+		//c.Response().Header().Set("X-Accel-Redirect", "/home/isucon/webapp/img/NoImage.jpg")
+		//return c.NoContent(http.StatusOK)
+		return c.File(fallbackImage)
 	}
 
 	clientIconHash := c.Request().Header.Get("If-None-Match")
