@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/go-json-experiment/json"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/go-json-experiment/json"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
@@ -52,8 +52,8 @@ func getReactionsHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	livestreamModel := LivestreamModel{}
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
+	livestreamModel, err := getLivestream(ctx, tx, livestreamID)
+	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 	}
 	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel)
@@ -138,8 +138,8 @@ func postReactionHandler(c echo.Context) error {
 	}
 	reactionModel.ID = reactionID
 
-	livestreamModel := LivestreamModel{}
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
+	livestreamModel, err := getLivestream(ctx, tx, livestreamID)
+	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 	}
 	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel)

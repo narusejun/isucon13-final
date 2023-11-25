@@ -228,6 +228,7 @@ func initializeSlaveHandler(c echo.Context) error {
 	rrCache = sync.Map{}
 	userCache = sync.Map{}
 	userFullCache = sync.Map{}
+	livestreamCache = sync.Map{}
 	userNameIconCache = sync.Map{}
 	livestreamTagsCache = sync.Map{}
 	cacheLock.Unlock()

@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/go-json-experiment/json"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/go-json-experiment/json"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/v4"
@@ -66,6 +66,24 @@ type ReservationSlotModel struct {
 	Slot    int64 `db:"slot" json:"slot"`
 	StartAt int64 `db:"start_at" json:"start_at"`
 	EndAt   int64 `db:"end_at" json:"end_at"`
+}
+
+var (
+	livestreamCache = sync.Map{}
+)
+
+func getLivestream(ctx context.Context, tx *sqlx.Tx, livestreamID int) (LivestreamModel, error) {
+	if livestream, ok := livestreamCache.Load(livestreamID); ok {
+		return livestream.(LivestreamModel), nil
+	}
+
+	livestream := LivestreamModel{}
+	if err := tx.GetContext(ctx, &livestream, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
+		return LivestreamModel{}, err
+	}
+	livestreamCache.Store(livestreamID, livestream)
+
+	return livestream, nil
 }
 
 func reserveLivestreamHandler(c echo.Context) error {
@@ -406,8 +424,7 @@ func getLivestreamHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	livestreamModel := LivestreamModel{}
-	err = tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID)
+	livestreamModel, err := getLivestream(ctx, tx, livestreamID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusNotFound, "not found livestream that has the given id")
 	}
@@ -445,8 +462,8 @@ func getLivecommentReportsHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	var livestreamModel LivestreamModel
-	if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
+	livestreamModel, err := getLivestream(ctx, tx, livestreamID)
+	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
 	}
 

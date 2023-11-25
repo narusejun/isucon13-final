@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/go-json-experiment/json"
-
 	"github.com/google/uuid"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"

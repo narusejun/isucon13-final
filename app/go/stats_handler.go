@@ -110,7 +110,7 @@ SELECT
     u.id AS id,
     IFNULL(SUM(l2.tip), 0) AS total_tips
 FROM users u
-INNER JOIN livestreams l ON l.user_id = u.id	
+INNER JOIN livestreams l ON l.user_id = u.id
 INNER JOIN livecomments l2 ON l2.livestream_id = l.id
 GROUP BY u.id
 `); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -186,8 +186,8 @@ func getUserStatisticsHandler(c echo.Context) error {
 
 	// リアクション数
 	var totalReactions int64
-	query := `SELECT COUNT(*) FROM users u 
-    INNER JOIN livestreams l ON l.user_id = u.id 
+	query := `SELECT COUNT(*) FROM users u
+    INNER JOIN livestreams l ON l.user_id = u.id
     INNER JOIN reactions r ON r.livestream_id = l.id
     WHERE u.name = ?
 	`
@@ -256,8 +256,8 @@ func getLivestreamStatisticsHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	var livestream LivestreamModel
-	if err := tx.GetContext(ctx, &livestream, "SELECT * FROM livestreams WHERE id = ?", livestreamID); err != nil {
+	livestream, err := getLivestream(ctx, tx, int(livestreamID))
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusBadRequest, "cannot get stats of not found livestream")
 		} else {
