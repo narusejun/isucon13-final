@@ -6,14 +6,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/labstack/echo/v4/middleware"
-	echolog "github.com/labstack/gommon/log"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
+
+	"github.com/labstack/echo/v4/middleware"
+	echolog "github.com/labstack/gommon/log"
 
 	"github.com/go-json-experiment/json"
 	"github.com/go-sql-driver/mysql"
@@ -179,6 +181,12 @@ func getTagByName(name string) (*Tag, error) {
 }
 
 func initializeHandler(c echo.Context) error {
+	cacheLock.Lock()
+	userCache = sync.Map{}
+	userFullCache = sync.Map{}
+	userNameIconCache = sync.Map{}
+	cacheLock.Unlock()
+
 	if out, err := exec.Command("../sql/init.sh").CombinedOutput(); err != nil {
 		c.Logger().Warnf("init.sh failed with err=%s", string(out))
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize: "+err.Error())

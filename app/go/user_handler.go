@@ -99,18 +99,12 @@ func getIconHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	var user struct {
-		ID   int64   `db:"id"`
-		Hash *string `db:"hash"`
-	}
-	if err := tx.GetContext(ctx, &user, "SELECT u.id AS id, i.hash AS hash FROM users u LEFT JOIN icons i ON i.user_id = u.id WHERE u.name = ?", username); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user ID: "+err.Error())
+	hash, err := getUserIconHash(ctx, tx, username)
+	if err != nil {
+		return err
 	}
 
-	if user.Hash == nil {
+	if hash == fallbackImageHash {
 		//c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
 		//c.Response().Header().Set("X-Accel-Redirect", "/home/isucon/webapp/img/NoImage.jpg")
 		//return c.NoContent(http.StatusOK)
@@ -118,12 +112,12 @@ func getIconHandler(c echo.Context) error {
 	}
 
 	clientIconHash := c.Request().Header.Get("If-None-Match")
-	if clientIconHash == *user.Hash {
+	if clientIconHash == hash {
 		return c.NoContent(http.StatusNotModified) // 304 Response
 	}
 
 	c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
-	c.Response().Header().Set("X-Accel-Redirect", fmt.Sprintf("/home/isucon/webapp/img/%s.jpg", *user.Hash))
+	c.Response().Header().Set("X-Accel-Redirect", fmt.Sprintf("/home/isucon/webapp/img/%s.jpg", hash))
 	return c.NoContent(http.StatusOK)
 }
 
@@ -145,6 +139,7 @@ func postIconHandler(c echo.Context) error {
 	sess, _ := session.Get(defaultSessionIDKey, c)
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
+	userName := sess.Values[defaultUsernameKey].(string)
 
 	var req *PostIconRequest
 	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
@@ -178,6 +173,7 @@ func postIconHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert new user icon: "+err.Error())
 	}
 	userFullCache.Delete(userID)
+	userNameIconCache.Delete(userName)
 
 	iconID, err := rs.LastInsertId()
 	if err != nil {
@@ -429,8 +425,10 @@ func verifyUserSession(c echo.Context) error {
 }
 
 var (
-	userCache     = sync.Map{}
-	userFullCache = sync.Map{}
+	cacheLock         = sync.Mutex{}
+	userCache         = sync.Map{}
+	userFullCache     = sync.Map{}
+	userNameIconCache = sync.Map{}
 )
 
 func getUser(ctx context.Context, tx *sqlx.Tx, userID int64) (UserModel, error) {
@@ -479,4 +477,30 @@ func fillUserResponse(ctx context.Context, tx *sqlx.Tx, userModel UserModel) (Us
 	userFullCache.Store(userModel.ID, user)
 
 	return user, nil
+}
+
+func getUserIconHash(ctx context.Context, tx *sqlx.Tx, username string) (string, error) {
+	if hash, ok := userNameIconCache.Load(username); ok {
+		return hash.(string), nil
+	}
+
+	var user struct {
+		ID   int64   `db:"id"`
+		Hash *string `db:"hash"`
+	}
+	if err := tx.GetContext(ctx, &user, "SELECT u.id AS id, i.hash AS hash FROM users u LEFT JOIN icons i ON i.user_id = u.id WHERE u.name = ?", username); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
+		}
+		return "", echo.NewHTTPError(http.StatusInternalServerError, "failed to get user ID: "+err.Error())
+	}
+
+	var result string
+	if user.Hash == nil {
+		result = fallbackImageHash
+	} else {
+		result = *user.Hash
+	}
+	userNameIconCache.Store(username, result)
+	return result, nil
 }
