@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -134,8 +135,13 @@ func postIconHandler(c echo.Context) error {
 	userID := sess.Values[defaultUserIDKey].(int64)
 	userName := sess.Values[defaultUsernameKey].(string)
 
+	reqBuf := new(bytes.Buffer)
+	if _, err := reqBuf.ReadFrom(c.Request().Body); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to read request body: "+err.Error())
+	}
+
 	var req *PostIconRequest
-	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
+	if err := json.Unmarshal(reqBuf.Bytes(), &req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
@@ -152,13 +158,11 @@ func postIconHandler(c echo.Context) error {
 	iconHash := sha256.Sum256(req.Image)
 	hexHash := hex.EncodeToString(iconHash[:])
 
-	f, err := os.OpenFile(getUserIconFilePath(hexHash), os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0777)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-	defer f.Close()
-	if _, err := f.Write(req.Image); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	// 別のインスタンスにリクエスト
+	if resp, err := http.Post("http://192.168.0.11:8080/api/internal/icon", "application/json; charset=UTF-8", reqBuf); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to post internal icon: "+err.Error())
+	} else {
+		defer resp.Body.Close()
 	}
 
 	rs, err := tx.ExecContext(ctx, "INSERT INTO icons (user_id, image, hash) VALUES (?, ?, ?)", userID, []byte{}, hexHash)
@@ -181,6 +185,25 @@ func postIconHandler(c echo.Context) error {
 	return c.JSON(http.StatusCreated, &PostIconResponse{
 		ID: iconID,
 	})
+}
+
+func postInternalIconHandler(c echo.Context) error {
+	var req *PostIconRequest
+	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to read request body: "+err.Error())
+	}
+	iconHash := sha256.Sum256(req.Image)
+	hexHash := hex.EncodeToString(iconHash[:])
+	f, err := os.OpenFile(getUserIconFilePath(hexHash), os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0777)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	defer f.Close()
+	if _, err := f.Write(req.Image); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	return c.NoContent(http.StatusOK)
 }
 
 func getMeHandler(c echo.Context) error {
