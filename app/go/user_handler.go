@@ -157,7 +157,7 @@ func postIconHandler(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert new user icon: "+err.Error())
 	}
-	userCache.Delete(userID)
+	userFullCache.Delete(userID)
 
 	iconID, err := rs.LastInsertId()
 	if err != nil {
@@ -192,8 +192,7 @@ func getMeHandler(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-	userModel := UserModel{}
-	err = tx.GetContext(ctx, &userModel, "SELECT * FROM users WHERE id = ?", userID)
+	userModel, err := getUser(ctx, tx, userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusNotFound, "not found user that has the userid in session")
 	}
@@ -265,7 +264,7 @@ func registerHandler(c echo.Context) error {
 	if _, err := tx.NamedExecContext(ctx, "INSERT INTO themes (user_id, dark_mode) VALUES(:user_id, :dark_mode)", themeModel); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert user theme: "+err.Error())
 	}
-	userCache.Delete(userID)
+	userFullCache.Delete(userID)
 
 	if out, err := exec.Command("pdnsutil", "add-record", "u.isucon.dev", req.Name, "A", "0", powerDNSSubdomainAddress).CombinedOutput(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, string(out)+": "+err.Error())
@@ -410,11 +409,26 @@ func verifyUserSession(c echo.Context) error {
 }
 
 var (
-	userCache = sync.Map{}
+	userCache     = sync.Map{}
+	userFullCache = sync.Map{}
 )
 
+func getUser(ctx context.Context, tx *sqlx.Tx, userID int64) (UserModel, error) {
+	if user, ok := userCache.Load(userID); ok {
+		return user.(UserModel), nil
+	}
+
+	user := UserModel{}
+	if err := tx.GetContext(ctx, &user, "SELECT * FROM users WHERE id = ?", userID); err != nil {
+		return UserModel{}, err
+	}
+	userCache.Store(userID, user)
+
+	return user, nil
+}
+
 func fillUserResponse(ctx context.Context, tx *sqlx.Tx, userModel UserModel) (User, error) {
-	if user, ok := userCache.Load(userModel.ID); ok {
+	if user, ok := userFullCache.Load(userModel.ID); ok {
 		return user.(User), nil
 	}
 
@@ -442,7 +456,7 @@ func fillUserResponse(ctx context.Context, tx *sqlx.Tx, userModel UserModel) (Us
 		},
 		IconHash: hash,
 	}
-	userCache.Store(userModel.ID, user)
+	userFullCache.Store(userModel.ID, user)
 
 	return user, nil
 }
