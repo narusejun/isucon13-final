@@ -35,16 +35,16 @@ cd /home/isucon/webapp/go/
 
 # もしpgo.pb.gzがあればPGOを利用してビルド
 if [ -e pgo.pb.gz ]; then
-  go build -o $(APP_NAME) -pgo=pgo.pb.gz
+  go build -o ${APP_NAME} -pgo=pgo.pb.gz
 else
-  go build -o $(APP_NAME)
+  go build -o ${APP_NAME}
 fi
 
 
 # ミドルウェア・Appの再起動
 #sudo systemctl restart mariadb
 #sudo systemctl reload nginx
-#sudo systemctl restart $(APP_NAME).go
+#sudo systemctl restart ${APP_NAME}.go
 
 # slow query logの有効化
 QUERY="
