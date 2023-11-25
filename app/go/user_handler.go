@@ -173,7 +173,6 @@ func postIconHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert new user icon: "+err.Error())
 	}
 	userFullCache.Delete(userID)
-	userNameIconCache.Delete(userName)
 
 	iconID, err := rs.LastInsertId()
 	if err != nil {
@@ -183,6 +182,8 @@ func postIconHandler(c echo.Context) error {
 	if err := tx.Commit(); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
+
+	userNameIconCache.Store(userName, hexHash)
 
 	return c.JSON(http.StatusCreated, &PostIconResponse{
 		ID: iconID,
