@@ -5,16 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/gofiber/fiber/v2"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-json-experiment/json"
 	"github.com/jmoiron/sqlx"
-	"github.com/labstack/echo-contrib/session"
-	"github.com/labstack/echo/v4"
 )
 
 type PostLivecommentRequest struct {
@@ -67,30 +65,30 @@ type NGWord struct {
 	CreatedAt    int64  `json:"created_at" db:"created_at"`
 }
 
-func getLivecommentsHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+func getLivecommentsHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
-		// echo.NewHTTPErrorが返っているのでそのまま出力
+		// fiber.NewErrorが返っているのでそのまま出力
 		return err
 	}
 
-	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
+	livestreamID, err := strconv.Atoi(c.Params("livestream_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
+		return fiber.NewError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	query := "SELECT * FROM livecomments WHERE livestream_id = ? ORDER BY created_at DESC"
-	if c.QueryParam("limit") != "" {
-		limit, err := strconv.Atoi(c.QueryParam("limit"))
+	if c.Query("limit") != "" {
+		limit, err := strconv.Atoi(c.Query("limit"))
 		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "limit query parameter must be integer")
+			return fiber.NewError(http.StatusBadRequest, "limit query parameter must be integer")
 		}
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -98,112 +96,111 @@ func getLivecommentsHandler(c echo.Context) error {
 	livecommentModels := []LivecommentModel{}
 	err = tx.SelectContext(ctx, &livecommentModels, query, livestreamID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return c.JSON(http.StatusOK, []*Livecomment{})
+		return c.Status(http.StatusOK).JSON([]*Livecomment{})
 	}
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
 	}
 
 	livestreamModel, err := getLivestream(ctx, tx, livestreamID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
 	}
 	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
 	}
 
 	livecomments := make([]Livecomment, len(livecommentModels))
 	for i := range livecommentModels {
 		livecomment, err := fillLivecommentResponse(ctx, tx, livecommentModels[i], &livestream)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
 		}
 
 		livecomments[i] = livecomment
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusOK, livecomments)
+	return c.Status(http.StatusOK).JSON(livecomments)
 }
 
-func getNgwords(c echo.Context) error {
-	ctx := c.Request().Context()
+func getNgwords(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
 		return err
 	}
 
 	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
+	sess, _ := getSession(c)
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
 
-	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
+	livestreamID, err := strconv.Atoi(c.Params("livestream_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
+		return fiber.NewError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	var ngWords []*NGWord
 	if err := tx.SelectContext(ctx, &ngWords, "SELECT * FROM ng_words WHERE user_id = ? AND livestream_id = ? ORDER BY created_at DESC", userID, livestreamID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return c.JSON(http.StatusOK, []*NGWord{})
+			return c.Status(http.StatusOK).JSON([]*NGWord{})
 		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusOK, ngWords)
+	return c.Status(http.StatusOK).JSON(ngWords)
 }
 
-func postLivecommentHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	defer c.Request().Body.Close()
+func postLivecommentHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
 		return err
 	}
 
-	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
+	livestreamID, err := strconv.Atoi(c.Params("livestream_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
+		return fiber.NewError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
 	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
+	sess, _ := getSession(c)
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
 
 	var req *PostLivecommentRequest
-	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	livestreamModel, err := getLivestream(ctx, tx, livestreamID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "livestream not found")
+			return fiber.NewError(http.StatusNotFound, "livestream not found")
 		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
 		}
 	}
 
@@ -213,7 +210,7 @@ func postLivecommentHandler(c echo.Context) error {
 		ngwords = cached.([]*NGWord)
 	} else {
 		if err := tx.SelectContext(ctx, &ngwords, "SELECT id, user_id, livestream_id, word FROM ng_words WHERE livestream_id = ?", livestreamModel.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
 		}
 		ngwordsCache.Store(livestreamID, ngwords)
 	}
@@ -229,17 +226,17 @@ func postLivecommentHandler(c echo.Context) error {
 	//	ON texts.text LIKE patterns.pattern;
 	//	`
 	//	if err := tx.GetContext(ctx, &hitSpam, query, req.Comment, ngword.Word); err != nil {
-	//		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get hitspam: "+err.Error())
+	//		return fiber.NewError(http.StatusInternalServerError, "failed to get hitspam: "+err.Error())
 	//	}
 	//	c.Logger().Infof("[hitSpam=%d] comment = %s", hitSpam, req.Comment)
 	//	if hitSpam >= 1 {
-	//		return echo.NewHTTPError(http.StatusBadRequest, "このコメントがスパム判定されました")
+	//		return fiber.NewError(http.StatusBadRequest, "このコメントがスパム判定されました")
 	//	}
 	//}
 
 	for _, ngword := range ngwords {
 		if strings.Contains(req.Comment, ngword.Word) {
-			return echo.NewHTTPError(http.StatusBadRequest, "このコメントがスパム判定されました")
+			return fiber.NewError(http.StatusBadRequest, "このコメントがスパム判定されました")
 		}
 	}
 
@@ -254,74 +251,74 @@ func postLivecommentHandler(c echo.Context) error {
 
 	rs, err := tx.NamedExecContext(ctx, "INSERT INTO livecomments (user_id, livestream_id, comment, tip, created_at) VALUES (:user_id, :livestream_id, :comment, :tip, :created_at)", livecommentModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert livecomment: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to insert livecomment: "+err.Error())
 	}
 
 	livecommentID, err := rs.LastInsertId()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted livecomment id: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get last inserted livecomment id: "+err.Error())
 	}
 	livecommentModel.ID = livecommentID
 
 	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
 	}
 
 	livecomment, err := fillLivecommentResponse(ctx, tx, livecommentModel, &livestream)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livecomment: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill livecomment: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusCreated, livecomment)
+	return c.Status(http.StatusCreated).JSON(livecomment)
 }
 
-func reportLivecommentHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+func reportLivecommentHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
 		return err
 	}
 
-	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
+	livestreamID, err := strconv.Atoi(c.Params("livestream_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
+		return fiber.NewError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
-	livecommentID, err := strconv.Atoi(c.Param("livecomment_id"))
+	livecommentID, err := strconv.Atoi(c.Params("livecomment_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "livecomment_id in path must be integer")
+		return fiber.NewError(http.StatusBadRequest, "livecomment_id in path must be integer")
 	}
 
 	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
+	sess, _ := getSession(c)
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	if _, err = getLivestream(ctx, tx, livestreamID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "livestream not found")
+			return fiber.NewError(http.StatusNotFound, "livestream not found")
 		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
 		}
 	}
 
 	var livecommentModel LivecommentModel
 	if err := tx.GetContext(ctx, &livecommentModel, "SELECT * FROM livecomments WHERE id = ?", livecommentID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "livecomment not found")
+			return fiber.NewError(http.StatusNotFound, "livecomment not found")
 		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomment: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to get livecomment: "+err.Error())
 		}
 	}
 
@@ -334,23 +331,23 @@ func reportLivecommentHandler(c echo.Context) error {
 	}
 	rs, err := tx.NamedExecContext(ctx, "INSERT INTO livecomment_reports(user_id, livestream_id, livecomment_id, created_at) VALUES (:user_id, :livestream_id, :livecomment_id, :created_at)", &reportModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert livecomment report: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to insert livecomment report: "+err.Error())
 	}
 	reportID, err := rs.LastInsertId()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted livecomment report id: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get last inserted livecomment report id: "+err.Error())
 	}
 	reportModel.ID = reportID
 
 	report, err := fillLivecommentReportResponse(ctx, tx, reportModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livecomment report: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill livecomment report: "+err.Error())
 	}
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusCreated, report)
+	return c.Status(http.StatusCreated).JSON(report)
 }
 
 var (
@@ -358,42 +355,41 @@ var (
 )
 
 // NGワードを登録
-func moderateHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	defer c.Request().Body.Close()
+func moderateHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
 		return err
 	}
 
-	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
+	livestreamID, err := strconv.Atoi(c.Params("livestream_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
+		return fiber.NewError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
 	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
+	sess, _ := getSession(c)
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
 
 	var req *ModerateRequest
-	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	// 配信者自身の配信に対するmoderateなのかを検証
 	var ownedLivestreams []LivestreamModel
 	if err := tx.SelectContext(ctx, &ownedLivestreams, "SELECT * FROM livestreams WHERE id = ? AND user_id = ?", livestreamID, userID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
 	if len(ownedLivestreams) == 0 {
-		return echo.NewHTTPError(http.StatusBadRequest, "A streamer can't moderate livestreams that other streamers own")
+		return fiber.NewError(http.StatusBadRequest, "A streamer can't moderate livestreams that other streamers own")
 	}
 
 	rs, err := tx.NamedExecContext(ctx, "INSERT INTO ng_words(user_id, livestream_id, word, created_at) VALUES (:user_id, :livestream_id, :word, :created_at)", &NGWord{
@@ -403,12 +399,12 @@ func moderateHandler(c echo.Context) error {
 		CreatedAt:    time.Now().Unix(),
 	})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert new NG word: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to insert new NG word: "+err.Error())
 	}
 
 	wordID, err := rs.LastInsertId()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted NG word id: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get last inserted NG word id: "+err.Error())
 	}
 
 	// 新規に追加したNGワードにヒットする過去の投稿も全削除する
@@ -420,16 +416,16 @@ func moderateHandler(c echo.Context) error {
 			comment LIKE ?
 			`
 	if _, err := tx.ExecContext(ctx, query, livestreamID, "%"+req.NGWord+"%"); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old livecomments that hit spams: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to delete old livecomments that hit spams: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 	time.Sleep(1000 * time.Millisecond)
 	ngwordsCache.Delete(livestreamID)
 
-	return c.JSON(http.StatusCreated, map[string]interface{}{
+	return c.Status(http.StatusCreated).JSON(map[string]interface{}{
 		"word_id": wordID,
 	})
 }

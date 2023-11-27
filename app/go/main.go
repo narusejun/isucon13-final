@@ -6,8 +6,7 @@ package main
 import (
 	"context"
 	"fmt"
-	echoInt "github.com/kaz/pprotein/integration/echov4"
-	echolog "github.com/labstack/gommon/log"
+	"github.com/gorilla/sessions"
 	"log"
 	"net"
 	"net/http"
@@ -18,10 +17,9 @@ import (
 
 	"github.com/go-json-experiment/json"
 	"github.com/go-sql-driver/mysql"
-	"github.com/gorilla/sessions"
+	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
-	"github.com/labstack/echo-contrib/session"
-	"github.com/labstack/echo/v4"
+
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"golang.org/x/sync/errgroup"
 )
@@ -35,6 +33,7 @@ var (
 	powerDNSSubdomainAddress string
 	dbConn                   *sqlx.DB
 	secret                   = []byte("isucon13_session_cookiestore_defaultsecret")
+	store                    sessions.Store
 )
 
 func init() {
@@ -42,13 +41,14 @@ func init() {
 	if secretKey, ok := os.LookupEnv("ISUCON13_SESSION_SECRETKEY"); ok {
 		secret = []byte(secretKey)
 	}
+	store = sessions.NewCookieStore(secret)
 }
 
 type InitializeResponse struct {
 	Language string `json:"language"`
 }
 
-func connectDB(logger echo.Logger) (*sqlx.DB, error) {
+func connectDB() (*sqlx.DB, error) {
 	const (
 		networkTypeEnvKey = "ISUCON13_MYSQL_DIALCONFIG_NET"
 		addrEnvKey        = "ISUCON13_MYSQL_DIALCONFIG_ADDRESS"
@@ -179,10 +179,10 @@ func getTagByName(name string) (*Tag, error) {
 	return tag, nil
 }
 
-func initializeHandler(c echo.Context) error {
-	if out, err := exec.Command("../sql/init.sh").CombinedOutput(); err != nil {
-		c.Logger().Warnf("init.sh failed with err=%s", string(out))
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
+func initializeHandler(c *fiber.Ctx) error {
+	if _, err := exec.Command("../sql/init.sh").CombinedOutput(); err != nil {
+		//c.Logger().Warnf("init.sh failed with err=%s", string(out))
+		return fiber.NewError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
 	}
 
 	eg := errgroup.Group{}
@@ -206,7 +206,7 @@ func initializeHandler(c echo.Context) error {
 	})
 
 	if err := eg.Wait(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to initialize: "+err.Error())
 	}
 
 	//go func() {
@@ -216,11 +216,11 @@ func initializeHandler(c echo.Context) error {
 	//}()
 
 	c.Request().Header.Add("Content-Type", "application/json;charset=utf-8")
-	return c.JSON(http.StatusOK, InitializeResponse{
+	return c.Status(http.StatusOK).JSON(InitializeResponse{
 		Language: "golang",
 	})
 }
-func initializeSlaveHandler(c echo.Context) error {
+func initializeSlaveHandler(c *fiber.Ctx) error {
 	resetSubdomains()
 
 	cacheLock.Lock()
@@ -233,12 +233,11 @@ func initializeSlaveHandler(c echo.Context) error {
 	livestreamTagsCache = sync.Map{}
 	cacheLock.Unlock()
 
-	ctx := c.Request().Context()
-	if err := resetTagCache(ctx); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to reset tag cache: "+err.Error())
+	if err := resetTagCache(c.Context()); err != nil {
+		return fiber.NewError(http.StatusInternalServerError, "failed to reset tag cache: "+err.Error())
 	}
 
-	return c.NoContent(http.StatusNoContent)
+	return c.SendStatus(http.StatusNoContent)
 }
 
 //type JSONSerializer interface {
@@ -246,97 +245,84 @@ func initializeSlaveHandler(c echo.Context) error {
 //	Deserialize(c Context, i interface{}) error
 //}
 
-type v2JSONSerializer struct {
-}
-
-func (s *v2JSONSerializer) Serialize(c echo.Context, i interface{}, indent string) error {
-	return json.MarshalWrite(c.Response(), i)
-}
-
-func (s *v2JSONSerializer) Deserialize(c echo.Context, i interface{}) error {
-	return json.UnmarshalRead(c.Request().Body, i)
-}
-
 func main() {
 	go startDNS()
 
-	e := echo.New()
+	e := fiber.New(fiber.Config{
+		JSONEncoder: func(v interface{}) ([]byte, error) {
+			return json.Marshal(v)
+		},
+		JSONDecoder: func(data []byte, v interface{}) error {
+			return json.Unmarshal(data, v)
+		},
+		ErrorHandler: errorResponseHandler,
+	})
 
 	//e.Debug = true
-	e.Logger.SetLevel(echolog.OFF)
+	//e.Logger.SetLevel(echolog.OFF)
 	//e.Use(middleware.Logger())
-	cookieStore := sessions.NewCookieStore(secret)
-	cookieStore.Options.Domain = "*.u.isucon.dev"
-	e.Use(session.Middleware(cookieStore))
 	// e.Use(middleware.Recover())
 
-	e.JSONSerializer = &v2JSONSerializer{}
-
-	// pprotein
-	echoInt.EnableDebugHandler(e)
-
 	// 初期化
-	e.POST("/api/initialize", initializeHandler)
-	e.POST("/api/initialize/slave", initializeSlaveHandler)
+	e.Post("/api/initialize", initializeHandler)
+	e.Post("/api/initialize/slave", initializeSlaveHandler)
 
 	// top
-	e.GET("/api/tag", getTagHandler)
-	e.GET("/api/user/:username/theme", getStreamerThemeHandler)
+	e.Get("/api/tag", getTagHandler)
+	e.Get("/api/user/:username/theme", getStreamerThemeHandler)
 
 	// livestream
 	// reserve livestream
-	e.POST("/api/livestream/reservation", reserveLivestreamHandler)
+	e.Post("/api/livestream/reservation", reserveLivestreamHandler)
 	// list livestream
-	e.GET("/api/livestream/search", searchLivestreamsHandler)
-	e.GET("/api/livestream", getMyLivestreamsHandler)
-	e.GET("/api/user/:username/livestream", getUserLivestreamsHandler)
+	e.Get("/api/livestream/search", searchLivestreamsHandler)
+	e.Get("/api/livestream", getMyLivestreamsHandler)
+	e.Get("/api/user/:username/livestream", getUserLivestreamsHandler)
 	// get livestream
-	e.GET("/api/livestream/:livestream_id", getLivestreamHandler)
+	e.Get("/api/livestream/:livestream_id", getLivestreamHandler)
 	// get polling livecomment timeline
-	e.GET("/api/livestream/:livestream_id/livecomment", getLivecommentsHandler)
+	e.Get("/api/livestream/:livestream_id/livecomment", getLivecommentsHandler)
 	// ライブコメント投稿
-	e.POST("/api/livestream/:livestream_id/livecomment", postLivecommentHandler)
-	e.POST("/api/livestream/:livestream_id/reaction", postReactionHandler)
-	e.GET("/api/livestream/:livestream_id/reaction", getReactionsHandler)
+	e.Post("/api/livestream/:livestream_id/livecomment", postLivecommentHandler)
+	e.Post("/api/livestream/:livestream_id/reaction", postReactionHandler)
+	e.Get("/api/livestream/:livestream_id/reaction", getReactionsHandler)
 
 	// (配信者向け)ライブコメントの報告一覧取得API
-	e.GET("/api/livestream/:livestream_id/report", getLivecommentReportsHandler)
-	e.GET("/api/livestream/:livestream_id/ngwords", getNgwords)
+	e.Get("/api/livestream/:livestream_id/report", getLivecommentReportsHandler)
+	e.Get("/api/livestream/:livestream_id/ngwords", getNgwords)
 	// ライブコメント報告
-	e.POST("/api/livestream/:livestream_id/livecomment/:livecomment_id/report", reportLivecommentHandler)
+	e.Post("/api/livestream/:livestream_id/livecomment/:livecomment_id/report", reportLivecommentHandler)
 	// 配信者によるモデレーション (NGワード登録)
-	e.POST("/api/livestream/:livestream_id/moderate", moderateHandler)
+	e.Post("/api/livestream/:livestream_id/moderate", moderateHandler)
 
 	// livestream_viewersにINSERTするため必要
 	// ユーザ視聴開始 (viewer)
-	e.POST("/api/livestream/:livestream_id/enter", enterLivestreamHandler)
+	e.Post("/api/livestream/:livestream_id/enter", enterLivestreamHandler)
 	// ユーザ視聴終了 (viewer)
-	e.DELETE("/api/livestream/:livestream_id/exit", exitLivestreamHandler)
+	e.Delete("/api/livestream/:livestream_id/exit", exitLivestreamHandler)
 
 	// user
-	e.POST("/api/register", registerHandler)
-	e.POST("/api/login", loginHandler)
-	e.GET("/api/user/me", getMeHandler)
+	e.Post("/api/register", registerHandler)
+	e.Post("/api/login", loginHandler)
+	e.Get("/api/user/me", getMeHandler)
 	// フロントエンドで、配信予約のコラボレーターを指定する際に必要
-	e.GET("/api/user/:username", getUserHandler)
-	e.GET("/api/user/:username/statistics", getUserStatisticsHandler)
-	e.GET("/api/user/:username/icon", getIconHandler)
-	e.POST("/api/icon", postIconHandler)
-	e.POST("/api/internal/icon", postInternalIconHandler)
+	e.Get("/api/user/:username", getUserHandler)
+	e.Get("/api/user/:username/statistics", getUserStatisticsHandler)
+	e.Get("/api/user/:username/icon", getIconHandler)
+	e.Post("/api/icon", postIconHandler)
+	e.Post("/api/internal/icon", postInternalIconHandler)
 
 	// stats
 	// ライブ配信統計情報
-	e.GET("/api/livestream/:livestream_id/statistics", getLivestreamStatisticsHandler)
+	e.Get("/api/livestream/:livestream_id/statistics", getLivestreamStatisticsHandler)
 
 	// 課金情報
-	e.GET("/api/payment", GetPaymentResult)
-
-	e.HTTPErrorHandler = errorResponseHandler
+	e.Get("/api/payment", GetPaymentResult)
 
 	// DB接続
-	conn, err := connectDB(e.Logger)
+	conn, err := connectDB()
 	if err != nil {
-		e.Logger.Errorf("failed to connect db: %v", err)
+		//e.Logger.Errorf("failed to connect db: %v", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
@@ -344,21 +330,21 @@ func main() {
 
 	// キャッシュの初期化
 	if err := resetTagCache(context.Background()); err != nil {
-		e.Logger.Errorf("failed to reset tag cache: %v", err)
+		//e.Logger.Errorf("failed to reset tag cache: %v", err)
 		os.Exit(1)
 	}
 
 	subdomainAddr, ok := os.LookupEnv(powerDNSSubdomainAddressEnvKey)
 	if !ok {
-		e.Logger.Errorf("environ %s must be provided", powerDNSSubdomainAddressEnvKey)
+		//e.Logger.Errorf("environ %s must be provided", powerDNSSubdomainAddressEnvKey)
 		os.Exit(1)
 	}
 	powerDNSSubdomainAddress = subdomainAddr
 
 	// HTTPサーバ起動
 	listenAddr := net.JoinHostPort("", strconv.Itoa(listenPort))
-	if err := e.Start(listenAddr); err != nil {
-		e.Logger.Errorf("failed to start HTTP server: %v", err)
+	if err := e.Listen(listenAddr); err != nil {
+		//e.Logger.Errorf("failed to start HTTP server: %v", err)
 		os.Exit(1)
 	}
 }
@@ -367,16 +353,12 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-func errorResponseHandler(err error, c echo.Context) {
-	c.Logger().Errorf("error at %s: %+v", c.Path(), err)
-	if he, ok := err.(*echo.HTTPError); ok {
-		if e := c.JSON(he.Code, &ErrorResponse{Error: err.Error()}); e != nil {
-			c.Logger().Errorf("%+v", e)
-		}
-		return
+func errorResponseHandler(c *fiber.Ctx, err error) error {
+	//c.Logger().Errorf("error at %s: %+v", c.Path(), err)
+	log.Printf("error at %s: %+v", c.Path(), err)
+	if he, ok := err.(*fiber.Error); ok {
+		return c.Status(he.Code).JSON(&ErrorResponse{Error: err.Error()})
 	}
 
-	if e := c.JSON(http.StatusInternalServerError, &ErrorResponse{Error: err.Error()}); e != nil {
-		c.Logger().Errorf("%+v", e)
-	}
+	return c.Status(http.StatusInternalServerError).JSON(&ErrorResponse{Error: err.Error()})
 }

@@ -1,24 +1,25 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gorilla/securecookie"
+	"github.com/gorilla/sessions"
 	"io"
 	"net/http"
 	"os"
 	"sync"
 	"time"
 
-	"github.com/go-json-experiment/json"
 	"github.com/google/uuid"
-	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
-	"github.com/labstack/echo-contrib/session"
-	"github.com/labstack/echo/v4"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -88,9 +89,9 @@ type PostIconResponse struct {
 	ID int64 `json:"id"`
 }
 
-func getIconHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	username := c.Param("username")
+func getIconHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
+	username := c.Params("username")
 
 	hash, err := getUserIconHash(ctx, username)
 	if err != nil {
@@ -98,24 +99,23 @@ func getIconHandler(c echo.Context) error {
 	}
 	etag := "\"" + hash + "\""
 
-	extectedEtag := c.Request().Header.Get("If-None-Match")
-	if etag == extectedEtag {
-		return c.NoContent(http.StatusNotModified) // 304 Response
+	extectedEtag := c.GetReqHeaders()["If-None-Match"]
+	if len(extectedEtag) > 0 && etag == extectedEtag[0] {
+		return c.SendStatus(http.StatusNotModified) // 304 Response
 	}
 
-	header := c.Response().Header()
-	header.Set(echo.HeaderContentType, "image/jpeg")
+	c.Response().Header.Set(fiber.HeaderContentType, "image/jpeg")
 
 	if hash == fallbackImageHash {
 		//c.Response().Header().Set(echo.HeaderContentType, "image/jpeg")
 		//c.Response().Header().Set("X-Accel-Redirect", "/home/isucon/webapp/img/NoImage.jpg")
 		//return c.NoContent(http.StatusOK)
-		return c.File(fallbackImage)
+		return c.SendFile(fallbackImage)
 	}
 
-	header.Set("ETag", etag)
-	header.Set("X-Accel-Redirect", fmt.Sprintf("/home/isucon/webapp/img/%s.jpg", hash))
-	return c.NoContent(http.StatusOK)
+	c.Response().Header.Set("ETag", etag)
+	c.Response().Header.Set("X-Accel-Redirect", fmt.Sprintf("/home/isucon/webapp/img/%s.jpg", hash))
+	return c.SendStatus(http.StatusOK)
 }
 
 const UserIconImageDir = "/home/isucon/webapp/img"
@@ -124,146 +124,150 @@ func getUserIconFilePath(hash string) string {
 	return fmt.Sprintf("%s/%s.jpg", UserIconImageDir, hash)
 }
 
-func postIconHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+func postIconHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
-		// echo.NewHTTPErrorが返っているのでそのまま出力
+		// fiber.NewErrorが返っているのでそのまま出力
 		return err
 	}
 
 	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
+
+	sess, _ := getSession(c)
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
 	userName := sess.Values[defaultUsernameKey].(string)
 
+	buf := c.Body()
+
 	// 別のインスタンスにリクエスト
 	hexHash := ""
-	if resp, err := http.Post("http://192.168.0.11:8080/api/internal/icon", "application/json; charset=UTF-8", c.Request().Body); err != nil || resp.StatusCode != http.StatusOK {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to post internal icon: "+err.Error())
+	if resp, err := http.Post("http://192.168.0.11:8080/api/internal/icon", "application/json; charset=UTF-8", bytes.NewReader(buf)); err != nil {
+		return fiber.NewError(http.StatusInternalServerError, "failed to post internal icon: "+err.Error())
+	} else if resp.StatusCode != http.StatusOK {
+		return fiber.NewError(http.StatusInternalServerError, "failed to post internal icon: "+resp.Status)
 	} else {
 		defer resp.Body.Close()
 		b, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to post internal icon: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to post internal icon: "+err.Error())
 		}
 		hexHash = string(b)
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx, "DELETE FROM icons WHERE user_id = ?", userID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old user icon: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to delete old user icon: "+err.Error())
 	}
 
 	rs, err := tx.ExecContext(ctx, "INSERT INTO icons (user_id, image, hash) VALUES (?, ?, ?)", userID, []byte{}, hexHash)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert new user icon: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to insert new user icon: "+err.Error())
 	}
 	userFullCache.Delete(userID)
 
 	iconID, err := rs.LastInsertId()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted icon id: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get last inserted icon id: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
 	userNameIconCache.Store(userName, hexHash)
 
-	return c.JSON(http.StatusCreated, &PostIconResponse{
+	return c.Status(http.StatusCreated).JSON(&PostIconResponse{
 		ID: iconID,
 	})
 }
 
-func postInternalIconHandler(c echo.Context) error {
+func postInternalIconHandler(c *fiber.Ctx) error {
 	var req *PostIconRequest
-	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to read request body: "+err.Error())
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(http.StatusInternalServerError, "failed to read request body: "+err.Error())
 	}
 	iconHash := sha256.Sum256(req.Image)
 	hexHash := hex.EncodeToString(iconHash[:])
 	f, err := os.OpenFile(getUserIconFilePath(hexHash), os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0777)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return fiber.NewError(http.StatusInternalServerError, err.Error())
 	}
 	defer f.Close()
 	if _, err := f.Write(req.Image); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return fiber.NewError(http.StatusInternalServerError, err.Error())
 	}
 
-	return c.String(http.StatusOK, hexHash)
+	return c.SendString(hexHash)
 }
 
-func getMeHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+func getMeHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
-		// echo.NewHTTPErrorが返っているのでそのまま出力
+		// fiber.NewErrorが返っているのでそのまま出力
 		return err
 	}
 
 	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
+	sess, _ := getSession(c)
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	userModel, err := getUser(ctx, tx, userID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusNotFound, "not found user that has the userid in session")
+		return fiber.NewError(http.StatusNotFound, "not found user that has the userid in session")
 	}
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get user: "+err.Error())
 	}
 
 	user, err := fillUserResponse(ctx, tx, userModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill user: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill user: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusOK, user)
+	return c.Status(http.StatusOK).JSON(user)
 }
 
 // ユーザ登録API
 // POST /api/register
-func registerHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	defer c.Request().Body.Close()
+func registerHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	req := PostUserRequest{}
-	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
 	if req.Name == "pipe" {
-		return echo.NewHTTPError(http.StatusBadRequest, "the username 'pipe' is reserved")
+		return fiber.NewError(http.StatusBadRequest, "the username 'pipe' is reserved")
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptDefaultCost)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate hashed password: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to generate hashed password: "+err.Error())
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
@@ -276,12 +280,12 @@ func registerHandler(c echo.Context) error {
 
 	result, err := tx.NamedExecContext(ctx, "INSERT INTO users (name, display_name, description, password) VALUES(:name, :display_name, :description, :password)", userModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert user: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to insert user: "+err.Error())
 	}
 
 	userID, err := result.LastInsertId()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted user id: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get last inserted user id: "+err.Error())
 	}
 
 	userModel.ID = userID
@@ -291,7 +295,7 @@ func registerHandler(c echo.Context) error {
 		DarkMode: req.Theme.DarkMode,
 	}
 	if _, err := tx.NamedExecContext(ctx, "INSERT INTO themes (user_id, dark_mode) VALUES(:user_id, :dark_mode)", themeModel); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert user theme: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to insert user theme: "+err.Error())
 	}
 	userFullCache.Delete(userID)
 
@@ -300,30 +304,29 @@ func registerHandler(c echo.Context) error {
 
 	user, err := fillUserResponse(ctx, tx, userModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill user: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill user: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusCreated, user)
+	return c.Status(http.StatusCreated).JSON(user)
 }
 
 // ユーザログインAPI
 // POST /api/login
-func loginHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	defer c.Request().Body.Close()
+func loginHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	req := LoginRequest{}
-	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
@@ -331,33 +334,31 @@ func loginHandler(c echo.Context) error {
 	// usernameはUNIQUEなので、whereで一意に特定できる
 	err = tx.GetContext(ctx, &userModel, "SELECT * FROM users WHERE name = ?", req.Username)
 	if errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusUnauthorized, "invalid username or password")
+		return fiber.NewError(http.StatusUnauthorized, "invalid username or password")
 	}
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get user: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
 	err = bcrypt.CompareHashAndPassword([]byte(userModel.HashedPassword), []byte(req.Password))
 	if err == bcrypt.ErrMismatchedHashAndPassword {
-		return echo.NewHTTPError(http.StatusUnauthorized, "invalid username or password")
+		return fiber.NewError(http.StatusUnauthorized, "invalid username or password")
 	}
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to compare hash and password: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to compare hash and password: "+err.Error())
 	}
 
 	sessionEndAt := time.Now().Add(1 * time.Hour)
 
 	sessionID := uuid.NewString()
 
-	sess, err := session.Get(defaultSessionIDKey, c)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusUnauthorized, "failed to get session")
+	sess := &sessions.Session{
+		Values: make(map[interface{}]interface{}),
 	}
-
 	sess.Options = &sessions.Options{
 		Domain: "u.isucon.dev",
 		MaxAge: int(60000),
@@ -368,72 +369,98 @@ func loginHandler(c echo.Context) error {
 	sess.Values[defaultUsernameKey] = userModel.Name
 	sess.Values[defaultSessionExpiresKey] = sessionEndAt.Unix()
 
-	if err := sess.Save(c.Request(), c.Response()); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save session: "+err.Error())
+	encoded, err := securecookie.EncodeMulti(defaultSessionIDKey, sess.Values, securecookie.CodecsFromPairs(secret)...)
+	if err != nil {
+		return fiber.NewError(http.StatusInternalServerError, "failed to encode session: "+err.Error())
 	}
 
-	return c.NoContent(http.StatusOK)
+	c.Cookie(&fiber.Cookie{
+		Name:    defaultSessionIDKey,
+		Value:   encoded,
+		Path:    "/",
+		Domain:  "u.isucon.dev",
+		Expires: sessionEndAt,
+	})
+
+	return c.SendStatus(http.StatusOK)
 }
 
 // ユーザ詳細API
 // GET /api/user/:username
-func getUserHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+func getUserHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 	if err := verifyUserSession(c); err != nil {
-		// echo.NewHTTPErrorが返っているのでそのまま出力
+		// fiber.NewErrorが返っているのでそのまま出力
 		return err
 	}
 
-	username := c.Param("username")
+	username := c.Params("username")
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	userModel := UserModel{}
 	if err := tx.GetContext(ctx, &userModel, "SELECT * FROM users WHERE name = ?", username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
+			return fiber.NewError(http.StatusNotFound, "not found user that has the given username")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get user: "+err.Error())
 	}
 
 	user, err := fillUserResponse(ctx, tx, userModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill user: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill user: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusOK, user)
+	return c.Status(http.StatusOK).JSON(user)
 }
 
-func verifyUserSession(c echo.Context) error {
-	sess, err := session.Get(defaultSessionIDKey, c)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusUnauthorized, "failed to get session")
+func verifyUserSession(c *fiber.Ctx) error {
+	encoded := c.Cookies(defaultSessionIDKey)
+	if encoded == "" {
+		return fiber.NewError(http.StatusUnauthorized, "failed to get session")
 	}
 
-	sessionExpires, ok := sess.Values[defaultSessionExpiresKey]
-	if !ok {
-		return echo.NewHTTPError(http.StatusForbidden, "failed to get EXPIRES value from session")
+	sess := &sessions.Session{}
+	securecookie.DecodeMulti(defaultSessionIDKey, encoded, &sess.Values, securecookie.CodecsFromPairs(secret)...)
+
+	sessionExpires := sess.Values[defaultSessionExpiresKey]
+	if sessionExpires == nil {
+		return fiber.NewError(http.StatusForbidden, "failed to get EXPIRES value from session")
 	}
 
-	_, ok = sess.Values[defaultUserIDKey].(int64)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "failed to get USERID value from session")
+	ok := sess.Values[defaultUserIDKey]
+	if ok == nil {
+		return fiber.NewError(http.StatusUnauthorized, "failed to get USERID value from session")
+	}
+	if _, ok := ok.(int64); !ok {
+		return fiber.NewError(http.StatusUnauthorized, "failed to get USERID value from session")
 	}
 
 	now := time.Now()
 	if now.Unix() > sessionExpires.(int64) {
-		return echo.NewHTTPError(http.StatusUnauthorized, "session has expired")
+		return fiber.NewError(http.StatusUnauthorized, "session has expired")
 	}
 
 	return nil
+}
+
+func getSession(c *fiber.Ctx) (*sessions.Session, error) {
+	encoded := c.Cookies(defaultSessionIDKey)
+	if encoded == "" {
+		return nil, fiber.NewError(http.StatusUnauthorized, "failed to get session")
+	}
+
+	sess := &sessions.Session{}
+	securecookie.DecodeMulti(defaultSessionIDKey, encoded, &sess.Values, securecookie.CodecsFromPairs(secret)...)
+	return sess, nil
 }
 
 var (
@@ -498,7 +525,7 @@ func getUserIconHash(ctx context.Context, username string) (string, error) {
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return "", echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return "", fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
@@ -508,9 +535,9 @@ func getUserIconHash(ctx context.Context, username string) (string, error) {
 	}
 	if err := tx.GetContext(ctx, &user, "SELECT u.id AS id, i.hash AS hash FROM users u LEFT JOIN icons i ON i.user_id = u.id WHERE u.name = ?", username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
+			return "", fiber.NewError(http.StatusNotFound, "not found user that has the given username")
 		}
-		return "", echo.NewHTTPError(http.StatusInternalServerError, "failed to get user ID: "+err.Error())
+		return "", fiber.NewError(http.StatusInternalServerError, "failed to get user ID: "+err.Error())
 	}
 
 	var result string

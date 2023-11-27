@@ -3,10 +3,9 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"github.com/gofiber/fiber/v2"
 	"net/http"
 	"slices"
-
-	"github.com/labstack/echo/v4"
 )
 
 type Tag struct {
@@ -18,7 +17,7 @@ type TagsResponse struct {
 	Tags []*Tag `json:"tags"`
 }
 
-func getTagHandler(c echo.Context) error {
+func getTagHandler(c *fiber.Ctx) error {
 	tags := make([]*Tag, 0, tagIDCache.Count())
 	for _, tag := range tagIDCache.Items() {
 		tags = append(tags, &Tag{
@@ -31,46 +30,46 @@ func getTagHandler(c echo.Context) error {
 		return int(a.ID - b.ID)
 	})
 
-	return c.JSON(http.StatusOK, &TagsResponse{
+	return c.Status(http.StatusOK).JSON(&TagsResponse{
 		Tags: tags,
 	})
 }
 
 // 配信者のテーマ取得API
 // GET /api/user/:username/theme
-func getStreamerThemeHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+func getStreamerThemeHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
-		// echo.NewHTTPErrorが返っているのでそのまま出力
-		c.Logger().Printf("verifyUserSession: %+v\n", err)
+		// fiber.NewErrorが返っているのでそのまま出力
+		//c.Logger().Printf("verifyUserSession: %+v\n", err)
 		return err
 	}
 
-	username := c.Param("username")
+	username := c.Params("username")
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	userModel := UserModel{}
 	err = tx.GetContext(ctx, &userModel, "SELECT id FROM users WHERE name = ?", username)
 	if errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusNotFound, "not found user that has the given username")
+		return fiber.NewError(http.StatusNotFound, "not found user that has the given username")
 	}
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get user: "+err.Error())
 	}
 
 	themeModel := ThemeModel{}
 	if err := tx.GetContext(ctx, &themeModel, "SELECT * FROM themes WHERE user_id = ?", userModel.ID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user theme: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get user theme: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
 	theme := Theme{
@@ -78,5 +77,5 @@ func getStreamerThemeHandler(c echo.Context) error {
 		DarkMode: themeModel.DarkMode,
 	}
 
-	return c.JSON(http.StatusOK, theme)
+	return c.Status(http.StatusOK).JSON(theme)
 }

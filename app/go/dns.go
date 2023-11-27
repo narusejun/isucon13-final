@@ -1339,9 +1339,9 @@ func startDNS() error {
 				}
 			} else {
 				return
-				//m.Rcode = dns.RcodeNameError
-				//m.Ns = []dns.RR{
-				//	newRR("u.isucon.dev. 0 IN SOA ns1.u.isucon.dev. hostmaster.u.isucon.dev. 0 10800 3600 604800 3600"),
+				//m.rcode = dns.rcodenameerror
+				//m.ns = []dns.rr{
+				//	newrr("u.isucon.dev. 0 in soa ns1.u.isucon.dev. hostmaster.u.isucon.dev. 0 10800 3600 604800 3600"),
 				//}
 			}
 		}

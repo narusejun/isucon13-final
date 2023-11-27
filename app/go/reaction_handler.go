@@ -3,14 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/gofiber/fiber/v2"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/go-json-experiment/json"
 	"github.com/jmoiron/sqlx"
-	"github.com/labstack/echo-contrib/session"
-	"github.com/labstack/echo/v4"
 )
 
 type ReactionModel struct {
@@ -33,90 +31,90 @@ type PostReactionRequest struct {
 	EmojiName string `json:"emoji_name"`
 }
 
-func getReactionsHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+func getReactionsHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
-		// echo.NewHTTPErrorが返っているのでそのまま出力
+		// fiber.NewErrorが返っているのでそのまま出力
 		return err
 	}
 
-	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
+	livestreamID, err := strconv.Atoi(c.Params("livestream_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
+		return fiber.NewError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	livestreamModel, err := getLivestream(ctx, tx, livestreamID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 	}
 	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 	}
 
 	query := "SELECT * FROM reactions WHERE livestream_id = ? ORDER BY created_at DESC"
-	if c.QueryParam("limit") != "" {
-		limit, err := strconv.Atoi(c.QueryParam("limit"))
+	if c.Query("limit") != "" {
+		limit, err := strconv.Atoi(c.Query("limit"))
 		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "limit query parameter must be integer")
+			return fiber.NewError(http.StatusBadRequest, "limit query parameter must be integer")
 		}
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
 	reactionModels := []ReactionModel{}
 	if err := tx.SelectContext(ctx, &reactionModels, query, livestreamID); err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "failed to get reactions")
+		return fiber.NewError(http.StatusNotFound, "failed to get reactions")
 	}
 
 	reactions := make([]Reaction, len(reactionModels))
 	for i := range reactionModels {
 		reaction, err := fillReactionResponse(ctx, tx, reactionModels[i], &livestream)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 		}
 
 		reactions[i] = reaction
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusOK, reactions)
+	return c.Status(http.StatusOK).JSON(reactions)
 }
 
-func postReactionHandler(c echo.Context) error {
-	ctx := c.Request().Context()
-	livestreamID, err := strconv.Atoi(c.Param("livestream_id"))
+func postReactionHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
+	livestreamID, err := strconv.Atoi(c.Params("livestream_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
+		return fiber.NewError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 
 	if err := verifyUserSession(c); err != nil {
-		// echo.NewHTTPErrorが返っているのでそのまま出力
+		// fiber.NewErrorが返っているのでそのまま出力
 		return err
 	}
 
 	// error already checked
-	sess, _ := session.Get(defaultSessionIDKey, c)
+	sess, _ := getSession(c)
 	// existence already checked
 	userID := sess.Values[defaultUserIDKey].(int64)
 
 	var req *PostReactionRequest
-	if err := json.UnmarshalRead(c.Request().Body, &req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
@@ -129,34 +127,34 @@ func postReactionHandler(c echo.Context) error {
 
 	result, err := tx.NamedExecContext(ctx, "INSERT INTO reactions (user_id, livestream_id, emoji_name, created_at) VALUES (:user_id, :livestream_id, :emoji_name, :created_at)", reactionModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert reaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to insert reaction: "+err.Error())
 	}
 
 	reactionID, err := result.LastInsertId()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted reaction id: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get last inserted reaction id: "+err.Error())
 	}
 	reactionModel.ID = reactionID
 
 	livestreamModel, err := getLivestream(ctx, tx, livestreamID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 	}
 	livestream, err := fillLivestreamResponse(ctx, tx, livestreamModel)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 	}
 
 	reaction, err := fillReactionResponse(ctx, tx, reactionModel, &livestream)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to fill reaction: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusCreated, reaction)
+	return c.Status(http.StatusCreated).JSON(reaction)
 }
 
 func fillReactionResponse(ctx context.Context, tx *sqlx.Tx, reactionModel ReactionModel, livestream *Livestream) (Reaction, error) {

@@ -4,12 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/gofiber/fiber/v2"
 	"net/http"
 	"sort"
 	"strconv"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/labstack/echo/v4"
+
 	"golang.org/x/sync/singleflight"
 )
 
@@ -108,7 +109,7 @@ GROUP BY u.id
 		if err := tx.SelectContext(context.Background(), &tips, `
 SELECT
     u.id AS id,
-    IFNULL(SUM(l2.tip), 0) AS total_tips
+    ifnull(SUM(l2.tip), 0) AS total_tips
 FROM users u
 INNER JOIN livestreams l ON l.user_id = u.id
 INNER JOIN livecomments l2 ON l2.livestream_id = l.id
@@ -142,37 +143,37 @@ GROUP BY u.id
 	return resultI.(UserRanking), nil
 }
 
-func getUserStatisticsHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+func getUserStatisticsHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
-		// echo.NewHTTPErrorが返っているのでそのまま出力
+		// fiber.NewErrorが返っているのでそのまま出力
 		return err
 	}
 
-	username := c.Param("username")
+	username := c.Params("username")
 	// ユーザごとに、紐づく配信について、累計リアクション数、累計ライブコメント数、累計売上金額を算出
 	// また、現在の合計視聴者数もだす
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	var user UserModel
 	if err := tx.GetContext(ctx, &user, "SELECT * FROM users WHERE name = ?", username); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusBadRequest, "not found user that has the given username")
+			return fiber.NewError(http.StatusBadRequest, "not found user that has the given username")
 		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get user: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to get user: "+err.Error())
 		}
 	}
 
 	// ランク算出
 	ranking, err := getUserRanking()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get ranking: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get ranking: "+err.Error())
 	}
 
 	var rank int64 = 1
@@ -192,7 +193,7 @@ func getUserStatisticsHandler(c echo.Context) error {
     WHERE u.name = ?
 	`
 	if err := tx.GetContext(ctx, &totalReactions, query, username); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to count total reactions: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to count total reactions: "+err.Error())
 	}
 
 	// ライブコメント数、チップ合計
@@ -200,14 +201,14 @@ func getUserStatisticsHandler(c echo.Context) error {
 		Tips     int64 `db:"tips"`
 		Comments int64 `db:"comments"`
 	}
-	if err := tx.GetContext(ctx, &livecomments, "SELECT IFNULL(SUM(tip), 0) AS tips, COUNT(*) AS comments FROM livecomments WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
+	if err := tx.GetContext(ctx, &livecomments, "SELECT ifnull(SUM(tip), 0) AS tips, COUNT(*) AS comments FROM livecomments WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fiber.NewError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
 	}
 
 	// 合計視聴者数
 	var viewersCount int64
 	if err := tx.GetContext(ctx, &viewersCount, "SELECT COUNT(*) FROM livestream_viewers_history WHERE livestream_id IN (SELECT id FROM livestreams WHERE user_id = ?)", user.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream_view_history: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get livestream_view_history: "+err.Error())
 	}
 
 	// お気に入り絵文字
@@ -223,7 +224,7 @@ func getUserStatisticsHandler(c echo.Context) error {
 	LIMIT 1
 	`
 	if err := tx.GetContext(ctx, &favoriteEmoji, query, username); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to find favorite emoji: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to find favorite emoji: "+err.Error())
 	}
 
 	stats := UserStatistics{
@@ -234,34 +235,34 @@ func getUserStatisticsHandler(c echo.Context) error {
 		TotalTip:          livecomments.Tips,
 		FavoriteEmoji:     favoriteEmoji,
 	}
-	return c.JSON(http.StatusOK, stats)
+	return c.Status(http.StatusOK).JSON(stats)
 }
 
-func getLivestreamStatisticsHandler(c echo.Context) error {
-	ctx := c.Request().Context()
+func getLivestreamStatisticsHandler(c *fiber.Ctx) error {
+	ctx := c.Context()
 
 	if err := verifyUserSession(c); err != nil {
 		return err
 	}
 
-	id, err := strconv.Atoi(c.Param("livestream_id"))
+	id, err := strconv.Atoi(c.Params("livestream_id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "livestream_id in path must be integer")
+		return fiber.NewError(http.StatusBadRequest, "livestream_id in path must be integer")
 	}
 	livestreamID := int64(id)
 
 	tx, err := dbConn.BeginTxx(ctx, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
 	}
 	defer tx.Rollback()
 
 	livestream, err := getLivestream(ctx, tx, int(livestreamID))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusBadRequest, "cannot get stats of not found livestream")
+			return fiber.NewError(http.StatusBadRequest, "cannot get stats of not found livestream")
 		} else {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
+			return fiber.NewError(http.StatusInternalServerError, "failed to get livestream: "+err.Error())
 		}
 	}
 
@@ -269,7 +270,7 @@ func getLivestreamStatisticsHandler(c echo.Context) error {
 		ID int64 `db:"id"`
 	}
 	if err := tx.SelectContext(ctx, &livestreams, "SELECT id FROM livestreams"); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
 
 	data := map[int64]LivestreamRankingEntry{}
@@ -289,7 +290,7 @@ SELECT
 FROM reactions r
 GROUP BY r.livestream_id
 `); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
 
 	type LiveTotalTip struct {
@@ -300,11 +301,11 @@ GROUP BY r.livestream_id
 	if err := tx.SelectContext(ctx, &tips, `
 SELECT
     l2.livestream_id AS id,
-    IFNULL(SUM(l2.tip), 0) AS total_tips
+    ifnull(SUM(l2.tip), 0) AS total_tips
 FROM livecomments l2
 GROUP BY l2.livestream_id
 `); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
 
 	// ランク算出
@@ -338,24 +339,24 @@ GROUP BY l2.livestream_id
 
 	viewersCount, err := calcViewerCount(tx, ctx, livestreamID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to count livestream viewers: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to count livestream viewers: "+err.Error())
 	}
 
 	maxTip, err := calcMaxTip(tx, ctx, livestreamID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to find maximum tip livecomment: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to find maximum tip livecomment: "+err.Error())
 	}
 
 	totalReports, err := calcTotalReports(tx, ctx, livestreamID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to count total spam reports: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to count total spam reports: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		return fiber.NewError(http.StatusInternalServerError, "failed to commit: "+err.Error())
 	}
 
-	return c.JSON(http.StatusOK, LivestreamStatistics{
+	return c.Status(http.StatusOK).JSON(LivestreamStatistics{
 		Rank:           rank,
 		ViewersCount:   viewersCount,
 		MaxTip:         maxTip,
@@ -376,7 +377,7 @@ func calcTotalReports(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int
 // 最大チップ額
 func calcMaxTip(tx *sqlx.Tx, ctx context.Context, livestreamID int64) (int64, error) {
 	var maxTip int64
-	if err := tx.GetContext(ctx, &maxTip, `SELECT IFNULL(MAX(tip), 0) FROM livecomments l2 WHERE l2.livestream_id = ? GROUP BY l2.livestream_id`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := tx.GetContext(ctx, &maxTip, `SELECT ifnull(MAX(tip), 0) FROM livecomments l2 WHERE l2.livestream_id = ? GROUP BY l2.livestream_id`, livestreamID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	return maxTip, nil
