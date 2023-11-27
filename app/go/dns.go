@@ -1338,10 +1338,11 @@ func startDNS() error {
 					newRR(r.Question[0].Name + " 120 IN A 54.178.156.176"),
 				}
 			} else {
-				m.Rcode = dns.RcodeNameError
-				m.Ns = []dns.RR{
-					newRR("u.isucon.dev. 0 IN SOA ns1.u.isucon.dev. hostmaster.u.isucon.dev. 0 10800 3600 604800 3600"),
-				}
+				return
+				//m.Rcode = dns.RcodeNameError
+				//m.Ns = []dns.RR{
+				//	newRR("u.isucon.dev. 0 IN SOA ns1.u.isucon.dev. hostmaster.u.isucon.dev. 0 10800 3600 604800 3600"),
+				//}
 			}
 		}
 		w.WriteMsg(m)
