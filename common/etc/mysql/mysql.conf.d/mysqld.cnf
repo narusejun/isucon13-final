@@ -82,3 +82,4 @@ innodb_flush_method = O_DIRECT # データファイル、ログファイルの�
 disable-log-bin
 innodb_doublewrite = 0
 innodb_log_writer_threads = off
+
